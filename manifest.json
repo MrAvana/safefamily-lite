@@ -1,0 +1,11 @@
+{
+  "domain": "safefamily_lite",
+  "name": "SafeFamily Lite",
+  "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "https://github.com/MrAvana/ha-safefamily-lite",
+  "issue_tracker": "https://github.com/MrAvana/ha-safefamily-lite/issues",
+  "codeowners": ["MrAvana"],
+  "requirements": [],
+  "iot_class": "cloud_polling"
+}

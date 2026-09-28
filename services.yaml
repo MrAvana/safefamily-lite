@@ -1,0 +1,269 @@
+send_command:
+  name: Send raw command
+  description: Send an arbitrary CmdCode to the watch.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    cmd_code:   { required: true, example: "9018", selector: { text: {} } }
+    params:     { selector: { text: {} } }
+
+save_profile:
+  name: Save profile
+  description: Update the watch owner's profile fields.
+  fields:
+    device_id:      { required: true, selector: { number: { min: 1, mode: box } } }
+    nickname:       { selector: { text: {} } }
+    birthday:       { selector: { text: {} } }
+    gender:         { selector: { number: { min: 0, max: 2, mode: box } } }
+    grade:          { selector: { text: {} } }
+    class_name:     { selector: { text: {} } }
+    school:         { selector: { text: {} } }
+    height_cm:      { selector: { number: { min: 0, max: 250, mode: box } } }
+    weight_kg:      { selector: { number: { min: 0, max: 300, mode: box } } }
+    blood_type:     { selector: { text: {} } }
+    allergic:       { selector: { text: {} } }
+    notes:          { selector: { text: { multiline: true } } }
+    condition:      { selector: { text: {} } }
+    drug:           { selector: { text: {} } }
+    address:        { selector: { text: {} } }
+    area:           { selector: { text: {} } }
+    cell_phone:     { selector: { text: {} } }
+    cell_phone_2:   { selector: { text: {} } }
+
+geofence_create:
+  name: Create geofence
+  description: Add a new fence for a watch.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    name:       { required: true, selector: { text: {} } }
+    latitude:   { required: true, selector: { number: { min: -90, max: 90, mode: box } } }
+    longitude:  { required: true, selector: { number: { min: -180, max: 180, mode: box } } }
+    radius:     { required: true, selector: { number: { min: 50, max: 5000, step: 1, mode: box } } }
+    address:    { selector: { text: {} } }
+
+geofence_delete:
+  name: Delete geofence
+  description: Remove a fence by its ID.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    fence_id:   { required: true, selector: { number: { min: 1, mode: box } } }
+
+geofence_edit:
+  name: Edit geofence
+  description: Modify an existing fence.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    fence_id:   { required: true, selector: { number: { min: 1, mode: box } } }
+    updates:    { required: true, selector: { object: {} } }
+
+list_geofences:
+  name: List geofences
+  description: >
+    Return the current list of geofences. If device_id is omitted, fences
+    across all watches are returned. Set refresh=true to force a fresh poll
+    before reading.
+  fields:
+    device_id:
+      selector: { number: { min: 1, mode: box } }
+    refresh:
+      default: false
+      selector: { boolean: {} }
+
+get_location_history:
+  name: Get location history
+  description: Fetch location history for a watch over a time range.
+  fields:
+    device_id:      { required: true, selector: { number: { min: 1, mode: box } } }
+    start_time:     { required: true, example: "2026-09-26 00:00:00", selector: { text: {} } }
+    end_time:       { required: true, example: "2026-09-26 23:59:59", selector: { text: {} } }
+    select_count:   { selector: { number: { min: 1, max: 5000, mode: box } } }
+
+send_text:
+  name: Send text message
+  description: Send a text chat message to the watch.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    text:       { required: true, selector: { text: { multiline: true } } }
+
+send_emoji:
+  name: Send emoji
+  description: >
+    Send one of the four built-in watch emoji stickers.
+    Accepts k01em0..k01em3, the shortcut 0..3, or a friendly label.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    emoji:      { required: true, example: "k01em2", selector: { text: {} } }
+
+set_alarms:
+  name: Set alarms (raw JSON)
+  description: Send a full alarm list as raw JSON. Advanced use.
+  fields:
+    device_id:    { required: true, selector: { number: { min: 1, mode: box } } }
+    alarms_json:  { required: true, selector: { text: { multiline: true } } }
+
+add_alarm:
+  name: Add alarm
+  description: Add a new alarm to the watch.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    time:       { required: true, example: "06:00", selector: { text: {} } }
+    days:
+      example: "Mon,Thu,Sat"
+      selector: { text: {} }
+
+delete_alarm:
+  name: Delete alarm
+  description: Delete an alarm by its index (position) or by its time.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    index:      { selector: { number: { min: 0, mode: box } } }
+    time:       { example: "06:00", selector: { text: {} } }
+
+set_class_mode:
+  name: Set Class Mode (raw JSON)
+  description: Send the full Class Mode window list as raw JSON. Advanced use.
+  fields:
+    device_id:      { required: true, selector: { number: { min: 1, mode: box } } }
+    windows_json:   { required: true, selector: { text: { multiline: true } } }
+
+add_class_window:
+  name: Add Class Mode window
+  description: Append a Class Mode time window to the watch.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    start:      { required: true, example: "08:00", selector: { text: {} } }
+    end:        { required: true, example: "11:30", selector: { text: {} } }
+    days:
+      example: "Mon,Tue,Wed,Thu,Fri"
+      selector: { text: {} }
+
+clear_class_mode:
+  name: Clear Class Mode
+  description: Remove all Class Mode windows from the watch.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+
+set_class_schedule:
+  name: Set class schedule (raw JSON)
+  description: Send the full timetable as raw JSON. Advanced use.
+  fields:
+    device_id:     { required: true, selector: { number: { min: 1, mode: box } } }
+    schedule_json: { required: true, selector: { text: { multiline: true } } }
+
+set_class_subject:
+  name: Set class subject
+  description: Set or clear a subject for one day and period. Requires an existing schedule.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    day:        { required: true, example: "Mon", selector: { text: {} } }
+    period:     { required: true, example: 1, selector: { number: { min: 1, max: 20, mode: box } } }
+    subject:    { required: true, example: "History", selector: { text: {} } }
+
+clear_class_schedule:
+  name: Clear class schedule
+  description: Remove all subjects from the timetable.
+  fields:
+    device_id: { required: true, selector: { number: { min: 1, mode: box } } }
+
+add_class_period:
+  name: Add class period
+  description: >
+    Add a new time slot to the timetable. Inserts an empty cell for the
+    new period on every day. Requires an existing schedule (use
+    set_class_schedule first if none exists).
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    start:      { required: true, example: "14:00", selector: { text: {} } }
+    end:        { required: true, example: "15:30", selector: { text: {} } }
+    position:
+      example: 1
+      selector: { number: { min: 1, max: 20, mode: box } }
+
+delete_class_period:
+  name: Delete class period
+  description: >
+    Remove a period from the timetable. Shifts subsequent periods up and
+    drops the corresponding subject from every day.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    position:   { required: true, example: 1, selector: { number: { min: 1, max: 20, mode: box } } }
+
+check_device:
+  name: Check device
+  description: >
+    Register a watch IMEI with the server and return its pairing info.
+    Returns the raw response including DeviceId, DeviceType, Model,
+    IsActivation, and NeedPhone.
+  fields:
+    imei:
+      required: true
+      example: "356083220277400"
+      selector: { text: {} }
+
+add_device:
+  name: Add device
+  description: >
+    Pair a new watch to your account. Internally calls check_device to
+    get a DeviceId, then binds the watch with the given name and phone.
+    The watch must be powered on and reachable by the server.
+  fields:
+    imei:
+      required: true
+      example: "356083220277400"
+      selector: { text: {} }
+    relation_name:
+      example: "Mitia"
+      selector: { text: {} }
+    relation_phone:
+      example: "+261346789768"
+      selector: { text: {} }
+    info:
+      selector: { text: {} }
+
+remove_device:
+  name: Remove device
+  description: >
+    Unpair a watch from your account. Use the device's numeric ID
+    (see sensor.<name>_device_id).
+  fields:
+    device_id:
+      required: true
+      selector: { number: { min: 1, mode: box } }
+
+add_contact:
+  name: Add contact
+  description: >
+    Add or replace a contact (SOS or regular) on the watch. If a contact
+    with the same name or number exists, it is updated in place.
+  fields:
+    device_id:     { required: true, selector: { number: { min: 1, mode: box } } }
+    name:          { required: true, example: "Dad", selector: { text: {} } }
+    number:        { required: true, example: "+261346789768", selector: { text: {} } }
+    icon:
+      selector:
+        select:
+          options:
+            - "Father"
+            - "Mother"
+            - "Sister"
+            - "Grandpa"
+            - "Granny"
+            - "Brother"
+            - "Other"
+    sos:           { selector: { boolean: {} } }
+    short_number:  { selector: { text: {} } }
+
+remove_contact:
+  name: Remove contact
+  description: >
+    Remove a contact by name or number. First matching entry is removed.
+  fields:
+    device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
+    name:       { example: "Dad", selector: { text: {} } }
+    number:     { example: "+261346789768", selector: { text: {} } }
+
+set_contacts:
+  name: Set contacts (raw JSON)
+  description: Replace the full contacts list with raw JSON. Advanced use.
+  fields:
+    device_id:      { required: true, selector: { number: { min: 1, mode: box } } }
+    contacts_json:  { required: true, selector: { text: { multiline: true } } }

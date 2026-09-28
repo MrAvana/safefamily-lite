@@ -1,0 +1,126 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SafeFamily Lite",
+        "description": "Sign in to the SafeFamily / Elari backend. Use the region your account was registered in (EU for most accounts; RU for Belarus/Russia).",
+        "data": {
+          "username": "Email",
+          "password": "Password",
+          "region": "Region"
+        }
+      }
+    },
+    "error": {
+      "auth": "Invalid credentials or wrong region. Check your email/password and try the other region.",
+      "cannot_connect": "Unable to reach the SafeFamily API. Check your network and try again."
+    },
+    "abort": {
+      "already_configured": "This account is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SafeFamily Lite options",
+        "data": {
+          "scan_interval": "Poll interval (seconds)"
+        },
+        "data_description": {
+          "scan_interval": "How often to fetch device state from the SafeFamily API. Minimum 30 seconds, maximum 3600 (1 hour)."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": { "name": "Battery" },
+      "steps": { "name": "Steps" },
+      "satellites": { "name": "Satellites" },
+      "signal": { "name": "Signal" },
+      "last_contact": { "name": "Last Contact" },
+      "last_heartbeat": { "name": "Last Heartbeat" },
+      "last_call": { "name": "Last Call" },
+      "call_history": { "name": "Call History" },
+      "commands": { "name": "Commands" },
+      "profile": { "name": "Profile" },
+      "geofences": { "name": "Geofences" },
+      "steps_today": { "name": "Steps Today" },
+      "friends": { "name": "Friends" },
+      "shares": { "name": "Shared With" },
+      "alerts": { "name": "Alerts" },
+      "next_alarm": { "name": "Next Alarm" },
+      "alarms": { "name": "Alarms" },
+      "device_id": { "name": "Device ID" },
+      "imei": { "name": "IMEI" },
+      "class_mode": { "name": "Class Mode" },
+      "timetable": { "name": "Class Schedule" },
+      "messages": { "name": "Messages" },
+      "voice_messages": { "name": "Voice Messages" },
+      "photos": { "name": "Photos" },
+      "contacts": { "name": "Contacts" },
+      "location_history": { "name": "Location History Today" },
+      "position_mode": {
+        "name": "Position Mode",
+        "state": {
+          "GPS": "GPS",
+          "LBS": "LBS",
+          "WiFi": "WiFi",
+          "Unknown": "Unknown"
+        }
+      }
+    },
+    "binary_sensor": {
+      "online": { "name": "Online" }
+    },
+    "button": {
+      "restart": { "name": "Restart" },
+      "ring": { "name": "Find Watch" },
+      "power_off": { "name": "Power Off" },
+      "refresh": { "name": "Refresh" },
+      "take_photo": { "name": "Take Photo" },
+      "emoji_0": { "name": "Send Sticker 1" },
+      "emoji_1": { "name": "Send Sticker 2" },
+      "emoji_2": { "name": "Send Sticker 3" },
+      "emoji_3": { "name": "Send Sticker 4" }
+    },
+    "switch": {
+      "stranger_block": { "name": "Block Stranger Calls" },
+      "auto_answer": { "name": "Auto Answer" },
+      "take_off_alert": { "name": "Take-off Alert" },
+      "care_time": { "name": "Care Time" }
+    },
+    "number": {
+      "step_goal": { "name": "Step Goal" }
+    },
+    "text": {
+      "nickname": { "name": "Nickname" },
+      "cell_phone": { "name": "Phone" },
+      "grade": { "name": "Grade" }
+    },
+    "date": {
+      "birthday": { "name": "Birthday" }
+    },
+    "select": {
+      "gender": {
+        "name": "Gender",
+        "state": {
+          "Unknown": "Unknown",
+          "Male": "Male",
+          "Female": "Female"
+        }
+      },
+      "care_time_mode": {
+        "name": "Care Time Tracking Mode"
+      }
+    },
+    "time": {
+      "care_time_start": { "name": "Care Time Start" },
+      "care_time_end": { "name": "Care Time End" }
+    },
+    "image": {
+      "last_emoji": { "name": "Last Emoji" },
+      "last_photo": { "name": "Last Photo" }
+    }
+  }
+}
