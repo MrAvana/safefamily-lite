@@ -1,6 +1,7 @@
 """SafeFamily Lite API client (reverse-engineered)."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -23,6 +24,12 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Hard ceiling for a single HTTP request. This also bounds DNS resolution,
+# which aiohttp's own ``connect`` timeout does not reliably cover. Without it
+# a black-holed host can leave the first refresh (and therefore config entry
+# setup) hanging until Home Assistant cancels it.
+REQUEST_TIMEOUT = 30
 
 
 class SafeFamilyAuthError(Exception):
@@ -157,21 +164,22 @@ class SafeFamilyApi:
         self, session: aiohttp.ClientSession, url: str, body: dict
     ) -> dict:
         try:
-            async with session.post(
-                url, json=body, headers=self._headers(self.access_token)
-            ) as r:
-                if r.status in (401, 403):
-                    await self._clear_token()
-                    raise SafeFamilyAuthError(f"{url} rejected: {r.status}")
-                if r.status >= 500:
-                    raise SafeFamilyServerError(
-                        f"HTTP {r.status}: {(await r.text())[:200]}"
-                    )
-                if r.status != 200:
-                    raise RuntimeError(
-                        f"HTTP {r.status}: {(await r.text())[:200]}"
-                    )
-                return await r.json()
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                async with session.post(
+                    url, json=body, headers=self._headers(self.access_token)
+                ) as r:
+                    if r.status in (401, 403):
+                        await self._clear_token()
+                        raise SafeFamilyAuthError(f"{url} rejected: {r.status}")
+                    if r.status >= 500:
+                        raise SafeFamilyServerError(
+                            f"HTTP {r.status}: {(await r.text())[:200]}"
+                        )
+                    if r.status != 200:
+                        raise RuntimeError(
+                            f"HTTP {r.status}: {(await r.text())[:200]}"
+                        )
+                    return await r.json()
         except (aiohttp.ClientError, TimeoutError) as err:
             raise SafeFamilyServerError(f"{url}: {err}") from err
 
@@ -188,11 +196,12 @@ class SafeFamilyApi:
             "timezone": self.timezone,
         }
         try:
-            async with session.post(
-                url, json=payload, headers=self._headers()
-            ) as r:
-                text = await r.text()
-                status = r.status
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                async with session.post(
+                    url, json=payload, headers=self._headers()
+                ) as r:
+                    text = await r.text()
+                    status = r.status
         except (aiohttp.ClientError, TimeoutError) as err:
             raise SafeFamilyServerError(f"cannot reach {url}: {err}") from err
 
@@ -728,18 +737,24 @@ class SafeFamilyApi:
     ) -> dict:
         url = ECP_BASE + "ecp/calls/last"
         body = {"ApiKey": API_KEY, "man_id": man_id}
-        async with session.post(url, json=body) as r:
-            if r.status != 200:
-                raise RuntimeError(f"HTTP {r.status}: {(await r.text())[:200]}")
-            return await r.json()
+        async with asyncio.timeout(REQUEST_TIMEOUT):
+            async with session.post(url, json=body) as r:
+                if r.status != 200:
+                    raise RuntimeError(
+                        f"HTTP {r.status}: {(await r.text())[:200]}"
+                    )
+                return await r.json()
 
     async def ecp_calls_history(
         self, session: aiohttp.ClientSession, man_id: str
     ) -> list[dict]:
         url = ECP_BASE + "ecp/calls/history"
         body = {"ApiKey": API_KEY, "man_id": man_id}
-        async with session.post(url, json=body) as r:
-            if r.status != 200:
-                raise RuntimeError(f"HTTP {r.status}: {(await r.text())[:200]}")
-            data = await r.json()
+        async with asyncio.timeout(REQUEST_TIMEOUT):
+            async with session.post(url, json=body) as r:
+                if r.status != 200:
+                    raise RuntimeError(
+                        f"HTTP {r.status}: {(await r.text())[:200]}"
+                    )
+                data = await r.json()
         return data.get("history", []) or []
