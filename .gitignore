@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+
+# vendor ROM / firmware dumps: large, and not ours to redistribute
+Elari_*.zip
+*_FMTK.zip
