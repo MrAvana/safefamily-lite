@@ -35,6 +35,7 @@ from .classschedule import (
 from .contacts import CONTACTS_CODE, normalize_contacts, parse_contacts_json
 from .const import DOMAIN, MODEL_NAMES
 from .coordinator import SafeFamilyCoordinator
+from .local import LocalCoordinator, local_sensors
 
 
 NUMERIC_DEFS = [
@@ -100,6 +101,12 @@ async def async_setup_entry(
 ) -> None:
     coord: SafeFamilyCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = []
+
+    # Local backend mode: only battery, last contact and link state exist --
+    # the vendor-only sensors below would all be empty.
+    if isinstance(coord, LocalCoordinator):
+        add(local_sensors(coord))
+        return
 
     for device_id, dev in (coord.data or {}).items():
         for field, name, unit, dev_class, state_class, key in NUMERIC_DEFS:

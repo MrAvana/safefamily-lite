@@ -34,8 +34,9 @@ from .classschedule import (
     parse_schedule,
     parse_schedule_json,
 )
-from .const import DOMAIN
+from .const import CONF_LOCAL_URL, DOMAIN
 from .coordinator import SafeFamilyCoordinator
+from .local import LocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +57,15 @@ PLATFORMS = [
     "time",
     "todo",
     "image",
+]
+
+# Local backend mode only wires up what a private backend can actually serve.
+# Every other platform below builds entities from vendor data (contacts, chat,
+# geofences, photos, class schedules) that simply does not exist locally.
+LOCAL_PLATFORMS = [
+    "sensor",
+    "device_tracker",
+    "button",
 ]
 
 SERVICE_SEND_COMMAND = "send_command"
@@ -555,11 +565,38 @@ async def _async_register_static_paths(hass: HomeAssistant) -> None:
         _LOGGER.warning("Could not register static paths: %s", err)
 
 
+async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up against a private local backend instead of the vendor cloud.
+
+    The backend speaks the watch's own protocol and offers a small HTTP JSON
+    API, so there is no login, no token and no vendor data: positions, battery
+    and heartbeats only.
+    """
+    coordinator = LocalCoordinator(hass, entry)
+    # Raises ConfigEntryNotReady while nothing has reported yet, which makes
+    # Home Assistant retry until the watch shows up.
+    await coordinator.async_config_entry_first_refresh()
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    await hass.config_entries.async_forward_entry_setups(entry, LOCAL_PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    _LOGGER.info(
+        "SafeFamily Lite using local backend %s (%d watch(es))",
+        coordinator.url,
+        len(coordinator.data or {}),
+    )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await _async_register_static_paths(hass)
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Static path setup skipped: %s", err)
+
+    if entry.data.get(CONF_LOCAL_URL):
+        return await _async_setup_local(hass, entry)
 
     coordinator = SafeFamilyCoordinator(hass, entry)
     await coordinator.async_restore_token()
@@ -1004,7 +1041,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    platforms = LOCAL_PLATFORMS if entry.data.get(CONF_LOCAL_URL) else PLATFORMS
+    unloaded = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not hass.data.get(DOMAIN):

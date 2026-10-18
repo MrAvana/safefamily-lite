@@ -12,6 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .chat import EMOJI_CODES, index_of
 from .const import DOMAIN
 from .coordinator import SafeFamilyCoordinator
+from .local import LocalCoordinator, local_buttons
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +38,12 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback
 ) -> None:
     coord: SafeFamilyCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    # Local backend mode: the vendor commands (restart, ring, emoji, photo)
+    # have no equivalent on a private backend, so only locate/refresh exist.
+    if isinstance(coord, LocalCoordinator):
+        add(local_buttons(coord))
+        return
 
     add(
         SafeFamilyCommandButton(coord, device_id, dev, key, cmd, dev_class)

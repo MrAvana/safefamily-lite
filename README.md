@@ -10,6 +10,8 @@ touch the official app for day-to-day use.
 
 ## Features
 
+- **Two data sources** — the Elari vendor cloud, or your own private backend
+  (see [Local backend mode](#local-backend-mode))
 - **Live tracking** — GPS/LBS position, battery, signal, steps, satellites
 - **Commands** — find watch, restart, power off, take photo
 - **Chat** — send text messages and emoji stickers
@@ -37,6 +39,9 @@ and both are implemented: **EU** (`skills.apps.elari.tech`) and
 **RU** (`skills.apps.elari.systems`). Pick the region your account was
 registered in during setup.
 
+If that cloud is unreachable — or gone — the same integration can run against
+your own server instead, see [Local backend mode](#local-backend-mode).
+
 ## Installation
 
 ### Via HACS (recommended)
@@ -56,6 +61,13 @@ registered in during setup.
 
 **Settings → Devices & Services → Add Integration → SafeFamily Lite**
 
+The first step asks where the watch data should come from: the **Elari vendor
+cloud** (email + password, and everything else documented in this README) or a
+**local backend** (your own server — position and status only, see
+[Local backend mode](#local-backend-mode)).
+
+### Elari vendor cloud
+
 | Field | Description |
 |---|---|
 | Email | Your SafeFamily / Elari account email |
@@ -70,15 +82,17 @@ does not need to re-login each time it starts.
 
 **Settings → Devices & Services → SafeFamily Lite → Configure**
 
-| Option | Default | Range |
-|---|---|---|
-| `region` | `EU` | `EU` or `RU` |
-| `scan_interval` | `300` (5 min) | 30–3600 seconds |
+| Option | Default | Range | Mode |
+|---|---|---|---|
+| `region` | `EU` | `EU` or `RU` | cloud |
+| `local_url` | — | any `http://` URL | local |
+| `local_name` | watch IMEI | any text | local |
+| `scan_interval` | `300` (cloud) / `60` (local) | 30–3600 s (15–3600 local) | both |
 
-`region` can be changed here without deleting and re-adding the integration
-(the entry reloads automatically). Lower scan intervals give faster UI
-updates but increase API traffic. 60 seconds is a practical minimum if you
-want the app and HA to stay close in sync.
+Only the options that apply to the configured mode are shown. Changes reload
+the integration automatically. Lower scan intervals give faster UI updates but
+increase traffic; the watch itself only reports every ~2.5 minutes, so anything
+below ~60 seconds just re-reads the same value.
 
 ### Upstream outages
 
@@ -87,7 +101,74 @@ the integration reports **"SafeFamily server unavailable"** and retries
 quietly. This is not treated as a credential problem and does not trigger a
 re-authentication flow. It recovers automatically once the backend is back.
 
+## Local backend mode
+
+A watch does not have to talk to the vendor at all. It speaks a simple line
+protocol of its own, so a small private server can take the cloud's place: it
+accepts the watch's connection, answers its login and configuration exchanges,
+stores every position and heartbeat the watch reports, and exposes a tiny HTTP
+JSON API that this integration polls. Your positions then live on your own
+hardware instead of someone else's.
+
+### Requirements
+
+* A server running the backend, reachable *by the watch* (the watch dials out
+  to it, so no inbound port on your router is needed).
+* Home Assistant able to reach that server's HTTP API — same LAN is ideal.
+* The watch pointed at that server. This is a one-time SMS to the watch's SIM;
+  the backend's own documentation covers the exact command.
+
+### Setup
+
+1. **Settings → Devices & Services → Add Integration → SafeFamily Lite**
+2. Choose **Local backend**
+3. Enter the backend URL, for example `http://192.168.8.20:8080`
+4. Optionally give the watch a friendly name (otherwise its IMEI is used)
+
+If the backend is up but no watch has reported yet, setup keeps retrying
+(Home Assistant shows *Retrying setup*) and the entities appear by themselves
+as soon as one connects.
+
+### Entities
+
+| Entity | Description |
+|---|---|
+| `device_tracker.<name>` | Position from the newest fix |
+| `sensor.<name>_battery` | Watch battery % |
+| `sensor.<name>_last_contact` | Timestamp of the newest sign of life |
+| `sensor.<name>_backend_link` | `online` / `offline` |
+| `button.<name>_locate_now` | Ask the watch for a real-time fix, then re-poll |
+| `button.<name>_refresh` | Re-poll the backend immediately |
+
+The tracker carries the detail automations need:
+
+| Attribute | Meaning |
+|---|---|
+| `source` | How the fix was obtained — `gps`, `unwired`, `opencellid`, `+cache` |
+| `accuracy_m` | Estimated error radius in metres |
+| `fix_time` | When that fix was taken |
+| `online` | Whether the watch has reported recently |
+| `last_contact`, `battery`, `firmware`, `imei` | Status and identity |
+
+**Check `accuracy_m` before trusting a position.** Cell-tower fixes are
+routinely 900 m to several kilometres off; only a real GPS fix is
+street-accurate, and this hardware reports GPS only when it feels like it.
+
+### What is not available
+
+Chat, contacts, alarms, geofences, photos, class mode and the settings
+entities all live in the vendor cloud, so local mode does not create them, and
+the vendor-only services are not registered.
+
+Two vendor sensors are deliberately absent: the heartbeat `signal` and
+`satellites` values are hardcoded constants in this watch's firmware, so
+publishing them as measurements would be fiction.
+
 ## Entities
+
+The entities in this section are the **vendor cloud** ones. In
+[local backend mode](#local-backend-mode) only the position, battery,
+last-contact, link and button entities listed above are created.
 
 For each paired watch, the integration creates a device with these entities:
 

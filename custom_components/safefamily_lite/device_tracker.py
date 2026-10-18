@@ -9,12 +9,20 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import SafeFamilyCoordinator
+from .local import LocalCoordinator, local_trackers
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback
 ) -> None:
     coord: SafeFamilyCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    # Local backend mode: positions come straight from the private server, so
+    # the vendor-shaped device dicts below do not apply.
+    if isinstance(coord, LocalCoordinator):
+        add(local_trackers(coord))
+        return
+
     add(
         SafeFamilyTracker(coord, device_id, dev)
         for device_id, dev in (coord.data or {}).items()
