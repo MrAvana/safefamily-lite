@@ -186,10 +186,17 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         location = payload.get("location") or {}
         lbs = payload.get("lbs") or {}
 
-        # Whichever of the two has a position *and* the newest timestamp wins: a
-        # freshly resolved tower fix beats a slightly older published one.
-        candidates = [c for c in (location, lbs) if c.get("lat") is not None]
-        fix = max(candidates, key=lambda c: _parse_ts(c.get("ts")), default={})
+        # Which fix to show. The backend has already decided which fix is *the*
+        # device position -- it refuses to let a kilometre-scale tower fix
+        # outrank a recent GPS one -- and stores that decision as the newest
+        # location row. So show that one.
+        #
+        # Taking the newer of `location` and `lbs` instead (which this did) undoes
+        # the decision: `lbs` is the tower *report*, refreshed on every cell
+        # frame, so the tracker stepped back onto the coarse cell fix seconds
+        # after a street-accurate GPS row had arrived. `lbs` is now only a
+        # fallback for before any position has been published at all.
+        fix = next((c for c in (location, lbs) if c.get("lat") is not None), {})
         lat = fix.get("lat")
         lon = fix.get("lon")
 
