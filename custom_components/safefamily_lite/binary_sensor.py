@@ -15,12 +15,21 @@ from homeassistant.util import dt as dt_util
 
 from .const import DEFAULT_OFFLINE_AFTER_MIN, DOMAIN
 from .coordinator import SafeFamilyCoordinator
+from .local import LocalCoordinator, local_binary_sensors
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback
 ) -> None:
     coord: SafeFamilyCoordinator = hass.data[DOMAIN][entry.entry_id]
+
+    # Local backend mode has exactly one binary sensor: whether the watch is
+    # reachable from outside. The vendor "online" sensor below reads a cloud
+    # timestamp that a private backend never fills in.
+    if isinstance(coord, LocalCoordinator):
+        add(local_binary_sensors(coord))
+        return
+
     add(
         SafeFamilyOnline(coord, device_id, dev)
         for device_id, dev in (coord.data or {}).items()

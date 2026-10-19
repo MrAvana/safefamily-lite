@@ -137,6 +137,7 @@ as soon as one connects.
 | `sensor.<name>_battery` | Watch battery % |
 | `sensor.<name>_last_contact` | Timestamp of the newest sign of life |
 | `sensor.<name>_backend_link` | `online` / `offline` |
+| `binary_sensor.<name>_tunnel` | Whether the public tunnel to the backend is up |
 | `button.<name>_locate_now` | Ask the watch for a real-time fix, then re-poll |
 | `button.<name>_restart` | Reboot the watch; it returns in about a minute |
 | `button.<name>_refresh` | Re-poll the backend immediately |
@@ -154,6 +155,16 @@ The tracker carries the detail automations need:
 **Check `accuracy_m` before trusting a position.** Cell-tower fixes are
 routinely 900 m to several kilometres off; only a real GPS fix is
 street-accurate, and this hardware reports GPS only when it feels like it.
+
+The tunnel sensor answers a question none of the others can. The watch reaches
+the backend over a public relay, so the backend can be perfectly healthy on the
+LAN while nothing from the watch arrives at all. The backend checks that path by
+round-tripping a login frame through the relay every 30 seconds; the sensor goes
+off after about 90 seconds of failures, and reads as *unknown* (not off) if the
+backend cannot be asked. It is about the tunnel, not the watch —
+`sensor.<name>_backend_link` is the one that knows about the watch. `last_probe`
+and `age_s` are attributes, so an automation can tell "down" from "down for
+20 minutes".
 
 ### What is not available
 

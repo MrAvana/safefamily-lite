@@ -64,6 +64,7 @@ PLATFORMS = [
 # geofences, photos, class schedules) that simply does not exist locally.
 LOCAL_PLATFORMS = [
     "sensor",
+    "binary_sensor",
     "device_tracker",
     "button",
 ]

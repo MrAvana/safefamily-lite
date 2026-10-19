@@ -6,7 +6,7 @@ talk to any server, so it can instead be pointed at a private backend that
 speaks the watch's own "IW" protocol over plain TCP. That backend is small: it
 stores positions, battery and heartbeats and offers an HTTP JSON API:
 
-    GET  /health                     liveness
+    GET  /health                     liveness + tunnel reachability
     GET  /state                      current device + position, keyed by IMEI
     POST /locate?imei=               ask the watch for a real-time fix
 
@@ -14,9 +14,9 @@ stores positions, battery and heartbeats and offers an HTTP JSON API:
 this integration needs them yet.)
 
 Only what that backend can serve is exposed here: the position (device_tracker),
-battery and last-contact sensors, and the locate / refresh buttons. Everything
-else in this integration (chat, contacts, geofences, photos, class mode) needs
-the vendor cloud and is untouched by this mode.
+battery and last-contact sensors, the tunnel sensor, and the locate / refresh
+buttons. Everything else in this integration (chat, contacts, geofences, photos,
+class mode) needs the vendor cloud and is untouched by this mode.
 
 Two deliberate omissions, both because the firmware makes them up: the heartbeat
 "signal" and "satellite" counts are hardcoded constants on this hardware, so
@@ -28,6 +28,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.components.button import ButtonEntity
 from homeassistant.components.device_tracker import TrackerEntity
 from homeassistant.components.sensor import (
@@ -97,6 +101,10 @@ class LocalApi:
         except LocalApiError:
             return False
 
+    async def health_detail(self, session: aiohttp.ClientSession) -> dict:
+        """The whole /health payload, so the tunnel block can be read from it."""
+        return await self._request(session, "GET", "/health")
+
     async def state(self, session: aiohttp.ClientSession) -> dict:
         return await self._request(session, "GET", "/state")
 
@@ -132,12 +140,25 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         )
         # Home Assistant's shared session: no connection pool churn every poll.
         self._session = async_get_clientsession(hass)
+        # None means "the backend did not tell us", which is what an older
+        # backend without the tunnel block returns. Kept separate from a
+        # reported-down tunnel so the sensor can say unknown instead of lying.
+        self.tunnel: dict | None = None
 
     async def _async_update_data(self) -> dict[str, dict]:
         try:
             state = await self.api.state(self._session)
         except LocalApiError as err:
             raise UpdateFailed(f"local backend unavailable: {err}") from err
+
+        # Best-effort and deliberately forgiving: a backend too old to answer
+        # /health with a tunnel block must not fail the whole update, or every
+        # entity would go unavailable over a field nothing else depends on.
+        try:
+            health = await self.api.health_detail(self._session)
+        except LocalApiError:
+            health = None
+        self.tunnel = (health or {}).get("tunnel")
 
         devices: dict[str, dict] = {}
         for imei, payload in (state or {}).items():
@@ -336,6 +357,50 @@ class LocalOnlineSensor(_LocalEntity, SensorEntity):
         return "online" if self._dev.get("online") else "offline"
 
 
+class LocalTunnelBinarySensor(_LocalEntity, BinarySensorEntity):
+    """Whether the watch is reachable from outside, not just from the LAN.
+
+    The watch talks to the backend over a public bore.pub tunnel, so the LAN
+    API can answer perfectly while nothing from the watch arrives. The backend
+    measures this by round-tripping a login frame through the relay; an open
+    public port would be a false positive, because a half-open tunnel still
+    accepts connections and then forwards nothing.
+    """
+
+    _attr_translation_key = "tunnel"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coord: LocalCoordinator, imei: str) -> None:
+        super().__init__(coord, imei, "tunnel")
+
+    @property
+    def _tunnel(self) -> dict | None:
+        return self.coordinator.tunnel
+
+    @property
+    def available(self) -> bool:
+        # Unknown is not the same as down: a backend that cannot be asked
+        # about the tunnel must not read as "the watch is unreachable".
+        return super().available and self._tunnel is not None
+
+    @property
+    def is_on(self):
+        tunnel = self._tunnel
+        if not tunnel:
+            return None
+        return bool(tunnel.get("ok"))
+
+    @property
+    def extra_state_attributes(self):
+        tunnel = self._tunnel or {}
+        return {
+            "last_probe": tunnel.get("last_probe"),
+            "age_s": tunnel.get("age_s"),
+            "probe_every_s": tunnel.get("probe_every_s"),
+            "stale_after_s": tunnel.get("stale_after_s"),
+        }
+
+
 class LocalLocateButton(_LocalEntity, ButtonEntity):
     """Ask the watch for a real-time fix right now."""
 
@@ -392,6 +457,10 @@ def local_sensors(coord: LocalCoordinator) -> list[SensorEntity]:
         for imei in (coord.data or {})
         for entity in (LocalBatterySensor, LocalLastContactSensor, LocalOnlineSensor)
     ]
+
+
+def local_binary_sensors(coord: LocalCoordinator) -> list[BinarySensorEntity]:
+    return [LocalTunnelBinarySensor(coord, imei) for imei in (coord.data or {})]
 
 
 def local_buttons(coord: LocalCoordinator) -> list[ButtonEntity]:
