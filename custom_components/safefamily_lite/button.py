@@ -39,8 +39,9 @@ async def async_setup_entry(
 ) -> None:
     coord: SafeFamilyCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Local backend mode: the vendor commands (restart, ring, emoji, photo)
-    # have no equivalent on a private backend, so only locate/refresh exist.
+    # Local backend mode: the watch speaks the same wire protocol, but only
+    # the commands the backend implements exist here. Ring, stickers and photo
+    # are still vendor-cloud-only, so this is locate/refresh/reboot.
     if isinstance(coord, LocalCoordinator):
         add(local_buttons(coord))
         return

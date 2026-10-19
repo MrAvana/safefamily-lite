@@ -103,6 +103,9 @@ class LocalApi:
     async def locate(self, session: aiohttp.ClientSession, imei: str) -> dict:
         return await self._request(session, "POST", "/locate", imei=imei)
 
+    async def reboot(self, session: aiohttp.ClientSession, imei: str) -> dict:
+        return await self._request(session, "POST", "/reboot", imei=imei)
+
 
 class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
     """Polls the private backend and caches one dict per watch, keyed by IMEI."""
@@ -210,6 +213,16 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         """Ask the watch for a real-time fix; the next poll picks it up."""
         await self.api.locate(self._session, imei)
         _LOGGER.debug("Real-time locate requested for %s", imei)
+
+    async def async_reboot(self, imei: str) -> None:
+        """Reboot the watch.
+
+        It acknowledges straight away, then the session drops and it logs
+        back in about a minute later, so the entry goes briefly unavailable.
+        Handy when the watch's session has wedged and stopped reporting.
+        """
+        await self.api.reboot(self._session, imei)
+        _LOGGER.debug("Reboot requested for %s", imei)
 
 
 def _parse_ts(value: str) -> datetime:
@@ -350,6 +363,25 @@ class LocalRefreshButton(_LocalEntity, ButtonEntity):
         await self.coordinator.async_request_refresh()
 
 
+class LocalRebootButton(_LocalEntity, ButtonEntity):
+    """Reboot the watch over its own protocol session.
+
+    Reuses the vendor button's translation key on purpose: "Restart" is
+    already the established wording for this action, and it means local mode
+    needs no new strings.
+    """
+
+    _attr_translation_key = "restart"
+    _attr_icon = "mdi:restart"
+
+    def __init__(self, coord: LocalCoordinator, imei: str) -> None:
+        super().__init__(coord, imei, "btn_reboot")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_reboot(self._imei)
+        await self.coordinator.async_request_refresh()
+
+
 def local_trackers(coord: LocalCoordinator) -> list[LocalTracker]:
     return [LocalTracker(coord, imei) for imei in (coord.data or {})]
 
@@ -366,5 +398,5 @@ def local_buttons(coord: LocalCoordinator) -> list[ButtonEntity]:
     return [
         entity(coord, imei)
         for imei in (coord.data or {})
-        for entity in (LocalLocateButton, LocalRefreshButton)
+        for entity in (LocalLocateButton, LocalRefreshButton, LocalRebootButton)
     ]

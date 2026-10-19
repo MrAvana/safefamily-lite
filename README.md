@@ -138,6 +138,7 @@ as soon as one connects.
 | `sensor.<name>_last_contact` | Timestamp of the newest sign of life |
 | `sensor.<name>_backend_link` | `online` / `offline` |
 | `button.<name>_locate_now` | Ask the watch for a real-time fix, then re-poll |
+| `button.<name>_restart` | Reboot the watch; it returns in about a minute |
 | `button.<name>_refresh` | Re-poll the backend immediately |
 
 The tracker carries the detail automations need:
