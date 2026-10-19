@@ -154,7 +154,11 @@ The tracker carries the detail automations need:
 
 **Check `accuracy_m` before trusting a position.** Cell-tower fixes are
 routinely 900 m to several kilometres off; only a real GPS fix is
-street-accurate, and this hardware reports GPS only when it feels like it.
+street-accurate. GPS is not a setting to switch on: the watch asks for the best
+fix it can get, so it reports GPS outdoors and falls back to a tower fix indoors.
+When `source` is `gps` and `accuracy_m` is `null`, the tracker reports a nominal
+10 m — the GPS frame carries no HDOP, and 0 would claim the fix is exact. The
+`null` is left in place so the substituted value stays visible.
 
 The tunnel sensor answers a question none of the others can. The watch reaches
 the backend over a public relay, so the backend can be perfectly healthy on the
