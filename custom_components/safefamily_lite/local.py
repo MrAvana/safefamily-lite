@@ -59,6 +59,13 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# The watch's own GPS frame. Unlike every other uplink its payload is not
+# comma-separated, so it is recognised by prefix rather than by parsing. A row
+# carrying one has no `source` (nothing resolved it -- the watch measured it) and
+# no `accuracy` (the frame has no HDOP), which is exactly why the two would
+# otherwise fall back to the raw frame text and to 0.
+GPS_RAW_PREFIX = "IWAP01"
+
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
 
 
@@ -210,7 +217,7 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             "lat": lat,
             "lon": lon,
             "accuracy": fix.get("accuracy"),
-            "source": fix.get("source") or fix.get("raw"),
+            "source": _fix_source(fix),
             "fix_ts": fix.get("ts"),
             "speed": fix.get("speed"),
             "course": fix.get("course"),
@@ -244,6 +251,21 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         """
         await self.api.reboot(self._session, imei)
         _LOGGER.debug("Reboot requested for %s", imei)
+
+
+def _fix_source(fix: dict) -> str | None:
+    """How a fix was obtained, in a form the UI can read.
+
+    A resolved tower fix carries its provenance in `source` (`unwired`,
+    `unwired+cache`, ...). A GPS row carries none, because nothing resolved it:
+    the watch measured the position itself. Falling back to `raw` there would put
+    an entire 75-character frame into the attribute, so name the case instead.
+    """
+    if fix.get("source"):
+        return fix["source"]
+    if str(fix.get("raw") or "").startswith(GPS_RAW_PREFIX):
+        return "gps"
+    return fix.get("raw") or None
 
 
 def _parse_ts(value: str) -> datetime:
