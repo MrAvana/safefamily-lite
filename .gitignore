@@ -6,3 +6,6 @@ __pycache__/
 # vendor ROM / firmware dumps: large, and not ours to redistribute
 Elari_*.zip
 *_FMTK.zip
+
+# decompiled vendor APK (apktool output): vendor code, huge
+SafeFamily Lite 1.0.5/
