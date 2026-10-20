@@ -8,15 +8,25 @@ stores positions, battery and heartbeats and offers an HTTP JSON API:
 
     GET  /health                     liveness + tunnel reachability
     GET  /state                      current device + position, keyed by IMEI
+    GET  /contacts?imei=             the phonebook last written to the watch
     POST /locate?imei=               ask the watch for a real-time fix
+    POST /contacts?imei=             replace the watch's phonebook
 
 (The backend also serves /locations history, /interval and /cmd; nothing in
 this integration needs them yet.)
 
 Only what that backend can serve is exposed here: the position (device_tracker),
-battery and last-contact sensors, the tunnel sensor, and the locate / refresh
-buttons. Everything else in this integration (chat, contacts, geofences, photos,
-class mode) needs the vendor cloud and is untouched by this mode.
+battery and last-contact sensors, the tunnel sensor, the phonebook sensor, and
+the locate / refresh / restart buttons, plus services to write the phonebook.
+Everything else in this integration (chat, geofences, photos, class mode) needs
+the vendor cloud and is untouched by this mode.
+
+The phonebook deserves its own note. It is the watch's call whitelist: with
+"Protect from Stranger Calls" on, a number not in it is rejected, so an empty
+list means nobody can reach the child. `IWBP83` replaces all 13 entries at once
+and nothing can read them back, so the backend keeps the list and re-pushes it
+at every login. The sensor here reports that stored copy -- what was last
+written, not an observation of the watch, which is not possible.
 
 Two deliberate omissions, both because the firmware makes them up: the heartbeat
 "signal" and "satellite" counts are hardcoded constants on this hardware, so
@@ -25,6 +35,7 @@ they are not published as if they were measurements.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -49,9 +60,12 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import (
+    CONF_CONTACT_COUNTRY_CODE,
+    CONF_CONTACT_TRUNK_PREFIX,
     CONF_LOCAL_NAME,
     CONF_LOCAL_URL,
     CONF_SCAN_INTERVAL,
+    DEFAULT_CONTACT_TRUNK_PREFIX,
     DEFAULT_LOCAL_SCAN_INTERVAL,
     DOMAIN,
     LOCAL_OFFLINE_AFTER_MIN,
@@ -80,7 +94,19 @@ REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
 
 
 class LocalApiError(Exception):
-    """The local backend could not be reached or answered with an error."""
+    """The local backend could not be reached or answered with an error.
+
+    `refusal` separates the two cases that look alike in a log: the backend
+    understood the request and said no -- a phonebook that would drop a
+    protected number, a number that is not listed -- which is the caller's
+    mistake, from a backend that is down or broken, which is not. The service
+    layer turns the first into a validation error and the second into a plain
+    failure, so an automation's log says which one happened.
+    """
+
+    def __init__(self, message: str, refusal: bool = False) -> None:
+        super().__init__(message)
+        self.refusal = refusal
 
 
 class LocalApi:
@@ -95,16 +121,20 @@ class LocalApi:
         self.base_url = base_url.rstrip("/")
 
     async def _request(
-        self, session: aiohttp.ClientSession, method: str, path: str, **params
+        self, session: aiohttp.ClientSession, method: str, path: str,
+        json_body=None, **params,
     ) -> dict:
         url = f"{self.base_url}{path}"
         try:
             async with session.request(
-                method, url, params=params, timeout=REQUEST_TIMEOUT
+                method, url, params=params, json=json_body, timeout=REQUEST_TIMEOUT
             ) as resp:
                 if resp.status >= 400:
                     body = (await resp.text())[:200]
-                    raise LocalApiError(f"{path} -> HTTP {resp.status}: {body}")
+                    raise LocalApiError(
+                        f"{path} -> HTTP {resp.status}: {body}",
+                        400 <= resp.status < 500,
+                    )
                 return await resp.json(content_type=None)
         except LocalApiError:
             raise
@@ -124,6 +154,18 @@ class LocalApi:
 
     async def state(self, session: aiohttp.ClientSession) -> dict:
         return await self._request(session, "GET", "/state")
+
+    async def contacts(self, session: aiohttp.ClientSession, imei: str) -> dict:
+        """The phonebook the backend last wrote, plus when and its guard list."""
+        return await self._request(session, "GET", "/contacts", imei=imei)
+
+    async def set_contacts(
+        self, session: aiohttp.ClientSession, imei: str, contacts: list[dict]
+    ) -> dict:
+        """Replace the whole phonebook. A refused list comes back as 409."""
+        return await self._request(
+            session, "POST", "/contacts", json_body={"contacts": contacts}, imei=imei
+        )
 
     async def locate(self, session: aiohttp.ClientSession, imei: str) -> dict:
         return await self._request(session, "POST", "/locate", imei=imei)
@@ -146,6 +188,19 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             entry.options.get(CONF_LOCAL_NAME)
             or entry.data.get(CONF_LOCAL_NAME)
             or ""
+        )
+        # Digits only, so "+261" and "261" both work. Empty is meaningful: it
+        # means the expansion is unavailable, and adding refuses rather than
+        # storing half a contact.
+        self.country_code = re.sub(
+            r"\D", "",
+            entry.options.get(CONF_CONTACT_COUNTRY_CODE, "")
+            or entry.data.get(CONF_CONTACT_COUNTRY_CODE, ""),
+        )
+        self.trunk_prefix = (
+            entry.options.get(CONF_CONTACT_TRUNK_PREFIX)
+            or entry.data.get(CONF_CONTACT_TRUNK_PREFIX)
+            or DEFAULT_CONTACT_TRUNK_PREFIX
         )
         self.api = LocalApi(self.url)
         scan = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_LOCAL_SCAN_INTERVAL)
@@ -180,7 +235,20 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         devices: dict[str, dict] = {}
         for imei, payload in (state or {}).items():
             if isinstance(payload, dict) and payload:
-                devices[imei] = self._flatten(imei, payload)
+                flat = self._flatten(imei, payload)
+                # Best effort, per watch: the phonebook lives at its own URL
+                # and a backend too old to serve it must not take the tracker
+                # down with it. None means "not known", which the sensor shows
+                # as unknown rather than as an empty -- and empty is the state
+                # worth alarming on, so the two must not be conflated.
+                try:
+                    info = await self.api.contacts(self._session, imei)
+                except LocalApiError:
+                    info = None
+                flat["contacts"] = (info or {}).get("contacts") if info else None
+                flat["contacts_pushed_at"] = (info or {}).get("pushed_at")
+                flat["contacts_required"] = (info or {}).get("required") or []
+                devices[imei] = flat
 
         if not devices:
             # Nothing has logged in yet. Failing setup makes Home Assistant
@@ -268,6 +336,193 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         """
         await self.api.reboot(self._session, imei)
         _LOGGER.debug("Reboot requested for %s", imei)
+
+    async def async_set_contacts(self, imei: str, contacts: list[dict]) -> dict:
+        """Write a whole phonebook, then re-read so the sensor is honest.
+
+        The backend refuses a list that drops a number it is configured to
+        protect, and that refusal travels back as a `LocalApiError` -- which is
+        what the caller should see, rather than a silent no-op.
+        """
+        result = await self.api.set_contacts(self._session, imei, contacts)
+        await self.async_request_refresh()
+        return result
+
+    async def async_add_contact(
+        self, imei: str, name: str, number: str, icon: int = 0, sos: bool = False
+    ) -> dict:
+        """Add one contact, storing every presentation of the number.
+
+        `IWBP83` replaces all 13 slots, so "add" is read-modify-write: take the
+        list the backend last wrote, put the pair where the contact already
+        was, and push the result. Editing the stored copy is the only option
+        because the watch cannot be asked what it currently holds.
+
+        Both presentations are stored because the watch compares the calling
+        number as a string: a subscriber saved only as `+261340000000` does not
+        ring when the network presents `0340000000`. Only the international
+        form carries the SOS flag, so the button dials one number rather than
+        the same person twice.
+        """
+        if not self.country_code:
+            raise LocalApiError(
+                "no country calling code is configured, so the other form of a "
+                "number cannot be worked out; set it in this integration's "
+                "configure dialog and try again",
+                refusal=True,
+            )
+
+        info = await self.api.contacts(self._session, imei)
+        contacts = list(info.get("contacts") or [])
+        forms = number_forms(number, self.country_code, self.trunk_prefix)
+        wanted = {_number_key(form) for form in forms}
+
+        entries = [
+            {
+                "name": name,
+                "number": form,
+                "icon": int(icon),
+                "is_sos": bool(sos) and index == 0,
+            }
+            for index, form in enumerate(forms)
+        ]
+
+        def key(contact: dict) -> str:
+            return _number_key(contact.get("number") or "")
+
+        # Replace in place rather than append, so editing a number does not
+        # shuffle the order the child sees on the watch. A contact stored in
+        # only one presentation is matched as well, so it becomes a pair here
+        # rather than gaining a duplicate elsewhere in the list.
+        kept = [contact for contact in contacts if key(contact) not in wanted]
+        first = next(
+            (index for index, contact in enumerate(contacts) if key(contact) in wanted),
+            None,
+        )
+        if first is None:
+            contacts = kept + entries
+        else:
+            cut = sum(1 for contact in contacts[:first] if key(contact) not in wanted)
+            contacts = kept[:cut] + entries + kept[cut:]
+
+        return await self.async_set_contacts(
+            imei, _heal_forms(contacts, self.country_code, self.trunk_prefix)
+        )
+
+    async def async_remove_contact(self, imei: str, number: str) -> dict:
+        """Drop every presentation of `number`, then push what is left.
+
+        Removal is read-modify-write for the same reason adding is: `IWBP83`
+        replaces all 13 slots, so the only way to take something out is to
+        write the rest back. Matching spans all presentations, so removing
+        `+261340000000` also takes out `0340000000`: leaving one behind would
+        keep the number ringing while the list claimed it was gone.
+
+        A number that matches nothing raises `LocalApiError` rather than
+        reporting success, because a typo must not look like a removal that
+        worked. This needs no country code: without one it still removes the
+        form you typed.
+        """
+        info = await self.api.contacts(self._session, imei)
+        contacts = list(info.get("contacts") or [])
+        wanted = {
+            _number_key(form)
+            for form in number_forms(number, self.country_code, self.trunk_prefix)
+        }
+        kept = [
+            contact
+            for contact in contacts
+            if _number_key(contact.get("number") or "") not in wanted
+        ]
+        if len(kept) == len(contacts):
+            raise LocalApiError(f"{number} is not in the phonebook", refusal=True)
+        return await self.async_set_contacts(
+            imei, _heal_forms(kept, self.country_code, self.trunk_prefix)
+        )
+
+
+def _number_key(number: str) -> str:
+    """Compare numbers ignoring `+`, spaces and dashes: all are presentation.
+
+    `+15551234567` and `15551234567` are the same subscriber, and the same
+    number can arrive in either form depending on how a call is routed.
+    """
+    return number.replace("+", "").replace(" ", "").replace("-", "")
+
+
+def number_forms(number: str, country_code: str, trunk: str = "0") -> list[str]:
+    """Every presentation of `number` that a caller ID may arrive in.
+
+    The watch compares the calling number as a string, so a subscriber stored
+    only as `+261340000000` does not ring when the network presents
+    `0340000000`. This turns whichever form was typed into both, international
+    first -- that is the one worth marking as SOS, because a second SOS entry
+    would dial the same person twice.
+
+    Anything it cannot map confidently comes back untouched: short codes,
+    foreign numbers, and digit strings outside a plausible subscriber length.
+    Storing what was typed is honest; inventing a country code for it is not.
+    With no country code configured only the input comes back, which is what
+    makes adding refuse instead of storing half a contact.
+    """
+    compact = re.sub(r"[\s\-()]", "", number.strip())
+    digits = compact.lstrip("+")
+    cc = re.sub(r"\D", "", country_code or "")
+    trunk = (trunk or "").strip()
+    if not compact or not digits.isdigit() or not cc:
+        return [compact]
+
+    if compact.startswith("+"):
+        # Another country's number: we do not know its trunk prefix, and
+        # guessing one would break an entry that works today.
+        if not digits.startswith(cc):
+            return [compact]
+        nsn = digits[len(cc):]
+    elif trunk and digits.startswith(trunk) and len(digits) > len(trunk):
+        nsn = digits[len(trunk):]
+    elif digits.startswith(cc) and len(digits) > len(cc):
+        nsn = digits[len(cc):]
+    else:
+        nsn = digits
+
+    # Outside this range it is a short code or a typo, not a subscriber number.
+    if not 6 <= len(nsn) <= 12:
+        return [compact]
+
+    forms = [f"+{cc}{nsn}"]
+    if trunk:
+        forms.append(f"{trunk}{nsn}")
+    return list(dict.fromkeys(forms))
+
+
+def _heal_forms(contacts: list[dict], country_code: str, trunk: str) -> list[dict]:
+    """Fill in the presentation(s) a stored entry is missing.
+
+    The watch cannot be read back, so the stored copy is the only evidence of
+    what the child can actually receive. An entry written before this expansion
+    existed -- or through the raw `set_local_contacts` service -- may carry one
+    form only, and that is a silent hole: her calls ring in one presentation
+    and not the other. Every write therefore re-derives the full set.
+
+    Entries are kept in place, so the order on the watch does not change.
+    Duplicates already in the list collapse, and only the international form
+    keeps an SOS flag.
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for contact in contacts:
+        forms = number_forms(contact.get("number") or "", country_code, trunk)
+        for index, form in enumerate(forms):
+            key = _number_key(form)
+            if key in seen:
+                continue
+            seen.add(key)
+            copy = dict(contact)
+            copy["number"] = form
+            if index:
+                copy["is_sos"] = False
+            out.append(copy)
+    return out
 
 
 def _fix_source(fix: dict) -> str | None:
@@ -393,6 +648,47 @@ class LocalLastContactSensor(_LocalEntity, SensorEntity):
         return None if parsed.year == 1 else parsed
 
 
+class LocalContactsSensor(_LocalEntity, SensorEntity):
+    """The phonebook the backend last wrote to the watch.
+
+    This is the call whitelist. It reports the backend's stored copy -- there is
+    no read-back from the device -- but the number of entries is the thing that
+    matters at a glance, because an empty list is what silently turns every
+    caller into a stranger when "Protect from Stranger Calls" is on.
+
+    `None` (a backend that cannot be asked) is kept distinct from `0`, so
+    "unknown" never reads as "nobody can call her".
+    """
+
+    _attr_translation_key = "contacts"
+    _attr_icon = "mdi:phone-book"
+
+    def __init__(self, coord: LocalCoordinator, imei: str) -> None:
+        super().__init__(coord, imei, "contacts")
+
+    @property
+    def native_value(self):
+        contacts = self._dev.get("contacts")
+        return None if contacts is None else len(contacts)
+
+    @property
+    def extra_state_attributes(self):
+        contacts = self._dev.get("contacts")
+        required = self._dev.get("contacts_required") or []
+        have = {_number_key(c.get("number") or "") for c in contacts or []}
+        return {
+            "contacts": contacts,
+            "pushed_at": self._dev.get("contacts_pushed_at"),
+            # The backend refuses a write that drops one of these, so this is
+            # belt and braces -- but it is the state worth alarming on.
+            "guardian_numbers": required,
+            "guardian_present": (
+                all(_number_key(n) in have for n in required)
+                if required and contacts is not None else None
+            ),
+        }
+
+
 class LocalOnlineSensor(_LocalEntity, SensorEntity):
     _attr_translation_key = "backend_state"
     _attr_device_class = SensorDeviceClass.ENUM
@@ -504,7 +800,8 @@ def local_sensors(coord: LocalCoordinator) -> list[SensorEntity]:
     return [
         entity(coord, imei)
         for imei in (coord.data or {})
-        for entity in (LocalBatterySensor, LocalLastContactSensor, LocalOnlineSensor)
+        for entity in (LocalBatterySensor, LocalLastContactSensor,
+                       LocalContactsSensor, LocalOnlineSensor)
     ]
 
 

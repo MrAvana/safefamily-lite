@@ -136,6 +136,7 @@ as soon as one connects.
 | `device_tracker.<name>` | Position from the newest fix |
 | `sensor.<name>_battery` | Watch battery % |
 | `sensor.<name>_last_contact` | Timestamp of the newest sign of life |
+| `sensor.<name>_contacts` | How many numbers are in the watch's phonebook |
 | `sensor.<name>_backend_link` | `online` / `offline` |
 | `binary_sensor.<name>_tunnel` | Whether the public tunnel to the backend is up |
 | `button.<name>_locate_now` | Ask the watch for a real-time fix, then re-poll |
@@ -170,11 +171,88 @@ backend cannot be asked. It is about the tunnel, not the watch —
 and `age_s` are attributes, so an automation can tell "down" from "down for
 20 minutes".
 
+### Phonebook (who is allowed to call the watch)
+
+The watch's phonebook is its **call whitelist**. With "Protect from Stranger
+Calls" on — the factory default, and a setting the watch keeps to itself — a
+caller who is not in the phonebook is rejected. An empty phonebook therefore
+does not mean "no numbers stored": it means *nobody can reach the child*, the
+guardian included. That is what a factory reset leaves behind, because the
+vendor app was the only thing that used to write the list and its cloud is gone.
+
+`POST /contacts` on the backend writes the whole phonebook through the watch's
+own protocol, and the backend keeps the list and re-writes it at every login, so
+a reset heals itself. Two services expose that here:
+
+| Service | Description |
+|---|---|
+| `safefamily_lite.set_local_contacts` | Replace the whole phonebook from JSON |
+| `safefamily_lite.add_local_contact` | Add or update one contact, storing both forms of the number |
+| `safefamily_lite.remove_local_contact` | Remove one contact, every stored form of its number |
+
+```yaml
+action: safefamily_lite.add_local_contact
+data:
+  imei: "123456789012345"
+  name: Dad
+  number: "+15551234567"
+  icon: Father    # or 0-6; see the table below
+  sos: true
+```
+
+`sensor.<name>_contacts` shows the stored list, `pushed_at`, the numbers the
+backend refuses to drop (`guardian_numbers`) and whether they are present. It
+reports **what the backend last wrote**, not an observation of the watch: the
+protocol has no way to read the phonebook back. `unknown` (backend too old to
+answer) is kept distinct from `0`, because `0` is the value worth alarming on.
+
+The `icon` is the avatar drawn beside the name, and it is cosmetic — it plays no
+part in who may call. In the UI it is a pick-list:
+
+| Value | Name | Value | Name |
+|---|---|---|---|
+| `0` | Father | `4` | Granny |
+| `1` | Mother | `5` | Brother |
+| `2` | Sister | `6` | Other |
+| `3` | Grandpa | | |
+
+Leaving it out gives **Other** (`6`), matching the vendor app's default. The
+mapping is taken from the vendor app's contact list rather than confirmed on the
+watch — the one entry written so far succeeded as a *call*, which says nothing
+about how an avatar renders.
+
+Two things to know before editing the list:
+
+* **A push replaces all 13 slots.** `add_local_contact` reads the stored copy,
+  updates one entry and writes the result back, which is the only way to "add"
+  to a list that cannot be read from the device. `remove_local_contact` is the
+  mirror image: it matches the number ignoring `+`, spaces and dashes, drops
+  every form of it, and writes the rest back. It **fails** if nothing matched,
+  so a typo cannot pass for a removal that worked.
+* **The number is stored in both presentations, automatically.** The firmware
+  compares the calling number as a string, and the same subscriber may arrive
+  as `+261340000000` or `0340000000` depending on how the call is routed, so
+  `add_local_contact` writes both: type either one and the pair is stored,
+  international first and that one marked SOS, because a second SOS entry would
+  dial the same person twice. This needs the country calling code and domestic
+  trunk prefix set once under *Configure* on the integration entry. Without
+  them, adding refuses rather than storing half a contact — removing still
+  works. Entries written before that setting existed are healed the next time
+  anything is added or removed.
+
+  Two presentations mean two of the 13 slots per contact, so six people fill
+  the list.
+
+The backend refuses a list that drops a number it is configured to protect
+(`CONTACT_REQUIRED`), and the call now fails with the backend's own reason in
+the UI — *refusing to remove the guardian number(s)* — rather than the bare
+"unknown error" a raw exception used to produce.
+
 ### What is not available
 
-Chat, contacts, alarms, geofences, photos, class mode and the settings
-entities all live in the vendor cloud, so local mode does not create them, and
-the vendor-only services are not registered.
+Chat, alarms, geofences, photos, class mode and the settings entities all live
+in the vendor cloud, so local mode does not create them, and the vendor-only
+services are not registered.
 
 Two vendor sensors are deliberately absent: the heartbeat `signal` and
 `satellites` values are hardcoded constants in this watch's firmware, so
@@ -184,7 +262,7 @@ publishing them as measurements would be fiction.
 
 The entities in this section are the **vendor cloud** ones. In
 [local backend mode](#local-backend-mode) only the position, battery,
-last-contact, link and button entities listed above are created.
+last-contact, phonebook, link and button entities listed above are created.
 
 For each paired watch, the integration creates a device with these entities:
 

@@ -18,12 +18,15 @@ from homeassistant.core import callback
 
 from .api import SafeFamilyApi, SafeFamilyAuthError
 from .const import (
+    CONF_CONTACT_COUNTRY_CODE,
+    CONF_CONTACT_TRUNK_PREFIX,
     CONF_LOCAL_NAME,
     CONF_LOCAL_URL,
     CONF_PASSWORD,
     CONF_REGION,
     CONF_SCAN_INTERVAL,
     CONF_USERNAME,
+    DEFAULT_CONTACT_TRUNK_PREFIX,
     DEFAULT_LOCAL_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -156,6 +159,21 @@ class SafeFamilyOptionsFlow(config_entries.OptionsFlow):
                             CONF_SCAN_INTERVAL, DEFAULT_LOCAL_SCAN_INTERVAL
                         ),
                     ): vol.All(int, vol.Range(min=15, max=3600)),
+                    # A caller ID may arrive in international or domestic form
+                    # and the watch compares strings, so both are stored. These
+                    # two turn one into the other; empty means "do not expand",
+                    # and adding then refuses rather than storing half a contact.
+                    vol.Optional(
+                        CONF_CONTACT_COUNTRY_CODE,
+                        default=entry.options.get(CONF_CONTACT_COUNTRY_CODE, ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_CONTACT_TRUNK_PREFIX,
+                        default=entry.options.get(
+                            CONF_CONTACT_TRUNK_PREFIX,
+                            DEFAULT_CONTACT_TRUNK_PREFIX,
+                        ),
+                    ): str,
                 }
             )
         else:

@@ -43,13 +43,17 @@
           "local_url": "Backend URL",
           "local_name": "Watch name (optional)",
           "region": "Region",
-          "scan_interval": "Poll interval (seconds)"
+          "scan_interval": "Poll interval (seconds)",
+          "contact_country_code": "Country calling code",
+          "contact_trunk_prefix": "Domestic trunk prefix"
         },
         "data_description": {
           "local_url": "Where the private backend listens. Changing it reloads the integration.",
           "local_name": "Friendly name for the watch device. Leave empty to use its IMEI.",
           "region": "Backend region the account is registered in. EU uses skills.apps.elari.tech; RU uses skills.apps.elari.systems.",
-          "scan_interval": "How often to fetch device state. Minimum 30 seconds (15 in local backend mode), maximum 3600 (1 hour)."
+          "scan_interval": "How often to fetch device state. Minimum 30 seconds (15 in local backend mode), maximum 3600 (1 hour).",
+          "contact_country_code": "Digits only, e.g. 261. Adding a contact stores both the international (+261...) and domestic (0...) forms, because a caller ID may present either. Leave empty to store numbers exactly as typed.",
+          "contact_trunk_prefix": "What replaces the country code on a domestic call: 0 almost everywhere, 1 in North America, empty in Italy."
         }
       }
     }

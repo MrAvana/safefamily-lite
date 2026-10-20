@@ -8,6 +8,11 @@ from pathlib import Path
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
+try:  # `ServiceValidationError` arrived in 2023.7; keep older cores working.
+    from homeassistant.exceptions import ServiceValidationError
+except ImportError:  # pragma: no cover - depends on the core version
+    ServiceValidationError = HomeAssistantError  # type: ignore[misc,assignment]
 from homeassistant.helpers import config_validation as cv
 
 from .alarms import (
@@ -35,8 +40,9 @@ from .classschedule import (
     parse_schedule_json,
 )
 from .const import CONF_LOCAL_URL, DOMAIN
+from .contacts import resolve_icon
 from .coordinator import SafeFamilyCoordinator
-from .local import LocalCoordinator
+from .local import LocalCoordinator, LocalApiError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,6 +104,15 @@ SERVICE_REMOVE_DEVICE = "remove_device"
 SERVICE_ADD_CONTACT = "add_contact"
 SERVICE_REMOVE_CONTACT = "remove_contact"
 SERVICE_SET_CONTACTS = "set_contacts"
+
+# Local-backend mode has no `device_id` (that is a number the vendor cloud
+# assigns) and runs against a different coordinator class, so its phonebook
+# services are named separately rather than overloaded onto the cloud ones --
+# a shared name would have to accept both `device_id` and `imei` and would
+# describe itself wrongly in the UI.
+SERVICE_SET_LOCAL_CONTACTS = "set_local_contacts"
+SERVICE_ADD_LOCAL_CONTACT = "add_local_contact"
+SERVICE_REMOVE_LOCAL_CONTACT = "remove_local_contact"
 
 ATTR_DEVICE_ID = "device_id"
 ATTR_CMD_CODE = "cmd_code"
@@ -176,6 +191,40 @@ SEND_COMMAND_SCHEMA = vol.Schema(
         vol.Required(ATTR_DEVICE_ID): cv.positive_int,
         vol.Required(ATTR_CMD_CODE): cv.string,
         vol.Optional(ATTR_PARAMS, default=""): cv.string,
+    }
+)
+
+# Local mode addresses a watch by IMEI. `contacts_json` takes the same shape the
+# cloud service accepts: a JSON array of {name, number, icon, is_sos}.
+SET_LOCAL_CONTACTS_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_IMEI): cv.string,
+        vol.Required(ATTR_CONTACTS_JSON): cv.string,
+    }
+)
+
+ADD_LOCAL_CONTACT_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_IMEI): cv.string,
+        vol.Required(ATTR_CONTACT_NAME): cv.string,
+        vol.Required(ATTR_CONTACT_NUMBER): cv.string,
+        # The avatar indices the cloud service uses: 0 Father, 1 Mother,
+        # 2 Sister, 3 Grandpa, 4 Granny, 5 Brother, 6+ Other. Accepts the
+        # friendly name too, via `resolve_icon`. The default is Other rather
+        # than Father, matching the vendor app: most entries are not the father,
+        # and a wrong avatar is easier to notice than to explain.
+        vol.Optional(ATTR_CONTACT_ICON, default=6): vol.Any(int, cv.string),
+        vol.Optional(ATTR_CONTACT_SOS, default=False): cv.boolean,
+    }
+)
+
+REMOVE_LOCAL_CONTACT_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_IMEI): cv.string,
+        # Number only: it is the key the watch compares against, and the name
+        # is not unique. The two presentations of one subscriber are separate
+        # entries, so this removes one at a time.
+        vol.Required(ATTR_CONTACT_NUMBER): cv.string,
     }
 )
 
@@ -566,6 +615,26 @@ async def _async_register_static_paths(hass: HomeAssistant) -> None:
         _LOGGER.warning("Could not register static paths: %s", err)
 
 
+async def _explain_refusal(pending) -> None:
+    """Await a local-backend write, and say why it failed in the UI's words.
+
+    `LocalApiError` is how the backend refuses -- a list that would drop a
+    protected number, a number that is not in the phonebook. Raised raw it
+    reaches the caller as a bare 500 with no reason in it, which is useless
+    when the whole point of the refusal is to tell you what you got wrong.
+
+    A refusal becomes `ServiceValidationError`: the request was understood and
+    rejected, so the REST API answers 400 and the message is the backend's.
+    Anything else (unreachable, timeout, 5xx) stays `HomeAssistantError` -- a
+    400 would wrongly blame the caller for a backend that is down.
+    """
+    try:
+        await pending
+    except LocalApiError as err:
+        error = ServiceValidationError if err.refusal else HomeAssistantError
+        raise error(str(err)) from err
+
+
 async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up against a private local backend instead of the vendor cloud.
 
@@ -581,6 +650,55 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, LOCAL_PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    # The phonebook services are the only writes local mode offers beyond the
+    # buttons. Everything else the integration can do needs vendor data.
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_LOCAL_CONTACTS):
+
+        async def _handle_set_local_contacts(call: ServiceCall) -> None:
+            try:
+                contacts = json.loads(call.data[ATTR_CONTACTS_JSON])
+            except ValueError as err:
+                raise ServiceValidationError(
+                    f"contacts_json is not valid JSON: {err}"
+                ) from err
+            await _explain_refusal(
+                coordinator.async_set_contacts(call.data[ATTR_IMEI], contacts)
+            )
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_SET_LOCAL_CONTACTS, _handle_set_local_contacts,
+            schema=SET_LOCAL_CONTACTS_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_ADD_LOCAL_CONTACT):
+
+        async def _handle_add_local_contact(call: ServiceCall) -> None:
+            await _explain_refusal(coordinator.async_add_contact(
+                call.data[ATTR_IMEI],
+                call.data[ATTR_CONTACT_NAME],
+                call.data[ATTR_CONTACT_NUMBER],
+                resolve_icon(call.data.get(ATTR_CONTACT_ICON), 6),
+                call.data.get(ATTR_CONTACT_SOS, False),
+            ))
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_ADD_LOCAL_CONTACT, _handle_add_local_contact,
+            schema=ADD_LOCAL_CONTACT_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_REMOVE_LOCAL_CONTACT):
+
+        async def _handle_remove_local_contact(call: ServiceCall) -> None:
+            await _explain_refusal(coordinator.async_remove_contact(
+                call.data[ATTR_IMEI],
+                call.data[ATTR_CONTACT_NUMBER],
+            ))
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_REMOVE_LOCAL_CONTACT, _handle_remove_local_contact,
+            schema=REMOVE_LOCAL_CONTACT_SCHEMA,
+        )
 
     _LOGGER.info(
         "SafeFamily Lite using local backend %s (%d watch(es))",
@@ -1074,6 +1192,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_CONTACT,
                 SERVICE_REMOVE_CONTACT,
                 SERVICE_SET_CONTACTS,
+                # The local-backend phonebook services share this guard, so
+                # leaving them out means a reload finds them still registered
+                # and keeps the handlers that close over the *previous*
+                # coordinator: a changed option (or backend URL) would apply to
+                # the entities and not to the services.
+                SERVICE_SET_LOCAL_CONTACTS,
+                SERVICE_ADD_LOCAL_CONTACT,
+                SERVICE_REMOVE_LOCAL_CONTACT,
             ):
                 hass.services.async_remove(DOMAIN, svc)
     return unloaded
