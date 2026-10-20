@@ -375,11 +375,12 @@ send_local_voice:
   name: Send voice message (local backend)
   description: >
     Queue an AMR-NB voice file for the watch. `url` must be reachable from
-    Home Assistant, for example http://homeassistant.local:8123/local/hello.amr.
-    The file is validated and stored by the backend, then handed to the watch
-    as it asks for it. Leave `notify` off during school hours: the immediate
-    alert may play aloud on the wrist, while a silent queue waits for the
-    child to open the message.
+    Home Assistant itself, for example
+    http://127.0.0.1:8123/local/hello.amr for a file in /config/www. The file
+    is validated and stored by the backend, then handed to the watch as it
+    asks for it. Leave `notify` off during school hours: the immediate alert
+    may play aloud on the wrist, while a silent queue waits for the child to
+    open the message.
   fields:
     imei:
       required: true
@@ -387,7 +388,7 @@ send_local_voice:
       selector: { text: {} }
     url:
       required: true
-      example: "http://homeassistant.local:8123/local/hello.amr"
+      example: "http://127.0.0.1:8123/local/hello.amr"
       selector: { text: {} }
     notify:
       default: false
