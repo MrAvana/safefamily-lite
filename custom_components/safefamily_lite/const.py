@@ -8,12 +8,6 @@ CONF_REGION = "region"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_LOCAL_URL = "local_url"
 CONF_LOCAL_NAME = "local_name"
-# Phonebook expansion. A caller ID arrives either in international form
-# (+261340000000) or in national form (0340000000) depending on how the call is
-# routed, and the watch compares strings, so both must be stored. These two
-# settings are what turn one into the other.
-CONF_CONTACT_COUNTRY_CODE = "contact_country_code"
-CONF_CONTACT_TRUNK_PREFIX = "contact_trunk_prefix"
 
 REGIONS = {
     "EU": "https://skills.apps.elari.tech/",
@@ -36,11 +30,6 @@ DEFAULT_OFFLINE_AFTER_MIN = 120
 # default is snappier than the cloud's. The watch itself reports roughly every
 # 2.5 minutes, so anything below ~60 s only re-reads the same value.
 DEFAULT_LOCAL_SCAN_INTERVAL = 60
-
-# Almost every numbering plan replaces its country code with a leading 0 for
-# domestic calls. NANP uses 1 and a few (Italy) use nothing, which is why this
-# is a setting rather than a constant in the parser.
-DEFAULT_CONTACT_TRUNK_PREFIX = "0"
 
 # A watch that is alive sends a heartbeat every ~5 minutes, so three misses in a
 # row mean it is gone (out of coverage, flat battery, SIM trouble).

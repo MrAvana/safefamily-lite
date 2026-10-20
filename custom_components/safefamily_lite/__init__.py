@@ -1201,7 +1201,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_LOCAL_CONTACT,
                 SERVICE_REMOVE_LOCAL_CONTACT,
             ):
-                hass.services.async_remove(DOMAIN, svc)
+                # Only the services this backend mode registered exist; the
+                # other set belongs to the vendor cloud and removing it blind
+                # logs a warning on every reload, which hides real ones.
+                if hass.services.has_service(DOMAIN, svc):
+                    hass.services.async_remove(DOMAIN, svc)
     return unloaded
 
 

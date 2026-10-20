@@ -35,7 +35,6 @@ they are not published as if they were measurements.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -60,16 +59,14 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import (
-    CONF_CONTACT_COUNTRY_CODE,
-    CONF_CONTACT_TRUNK_PREFIX,
     CONF_LOCAL_NAME,
     CONF_LOCAL_URL,
     CONF_SCAN_INTERVAL,
-    DEFAULT_CONTACT_TRUNK_PREFIX,
     DEFAULT_LOCAL_SCAN_INTERVAL,
     DOMAIN,
     LOCAL_OFFLINE_AFTER_MIN,
 )
+from .numbers import explain, normalize, number_forms
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -188,19 +185,6 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             entry.options.get(CONF_LOCAL_NAME)
             or entry.data.get(CONF_LOCAL_NAME)
             or ""
-        )
-        # Digits only, so "+261" and "261" both work. Empty is meaningful: it
-        # means the expansion is unavailable, and adding refuses rather than
-        # storing half a contact.
-        self.country_code = re.sub(
-            r"\D", "",
-            entry.options.get(CONF_CONTACT_COUNTRY_CODE, "")
-            or entry.data.get(CONF_CONTACT_COUNTRY_CODE, ""),
-        )
-        self.trunk_prefix = (
-            entry.options.get(CONF_CONTACT_TRUNK_PREFIX)
-            or entry.data.get(CONF_CONTACT_TRUNK_PREFIX)
-            or DEFAULT_CONTACT_TRUNK_PREFIX
         )
         self.api = LocalApi(self.url)
         scan = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_LOCAL_SCAN_INTERVAL)
@@ -363,18 +347,19 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         ring when the network presents `0340000000`. Only the international
         form carries the SOS flag, so the button dials one number rather than
         the same person twice.
+
+        The number is validated against Home Assistant's own country setting
+        before anything is written. A number that cannot be a real subscriber
+        is refused rather than stored: an entry that will never ring looks
+        exactly like success.
         """
-        if not self.country_code:
-            raise LocalApiError(
-                "no country calling code is configured, so the other form of a "
-                "number cannot be worked out; set it in this integration's "
-                "configure dialog and try again",
-                refusal=True,
-            )
+        region = self.hass.config.country
+        forms = number_forms(number, region)
+        if not forms:
+            raise LocalApiError(explain(number, region), refusal=True)
 
         info = await self.api.contacts(self._session, imei)
         contacts = list(info.get("contacts") or [])
-        forms = number_forms(number, self.country_code, self.trunk_prefix)
         wanted = {_number_key(form) for form in forms}
 
         entries = [
@@ -405,9 +390,7 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             cut = sum(1 for contact in contacts[:first] if key(contact) not in wanted)
             contacts = kept[:cut] + entries + kept[cut:]
 
-        return await self.async_set_contacts(
-            imei, _heal_forms(contacts, self.country_code, self.trunk_prefix)
-        )
+        return await self.async_set_contacts(imei, _heal_forms(contacts, region))
 
     async def async_remove_contact(self, imei: str, number: str) -> dict:
         """Drop every presentation of `number`, then push what is left.
@@ -420,15 +403,14 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
 
         A number that matches nothing raises `LocalApiError` rather than
         reporting success, because a typo must not look like a removal that
-        worked. This needs no country code: without one it still removes the
-        form you typed.
+        worked. Nothing here is validated: removal has to work on whatever is
+        already stored, including a number that would be refused today.
         """
+        region = self.hass.config.country
+        forms = number_forms(number, region) or [normalize(number)]
         info = await self.api.contacts(self._session, imei)
         contacts = list(info.get("contacts") or [])
-        wanted = {
-            _number_key(form)
-            for form in number_forms(number, self.country_code, self.trunk_prefix)
-        }
+        wanted = {_number_key(form) for form in forms}
         kept = [
             contact
             for contact in contacts
@@ -436,82 +418,40 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         ]
         if len(kept) == len(contacts):
             raise LocalApiError(f"{number} is not in the phonebook", refusal=True)
-        return await self.async_set_contacts(
-            imei, _heal_forms(kept, self.country_code, self.trunk_prefix)
-        )
+        return await self.async_set_contacts(imei, _heal_forms(kept, region))
 
 
 def _number_key(number: str) -> str:
-    """Compare numbers ignoring `+`, spaces and dashes: all are presentation.
+    """Compare numbers ignoring `+` and the characters a screen adds.
 
-    `+15551234567` and `15551234567` are the same subscriber, and the same
+    `+261340000000` and `261340000000` are the same subscriber, and the same
     number can arrive in either form depending on how a call is routed.
     """
-    return number.replace("+", "").replace(" ", "").replace("-", "")
+    return normalize(number).replace("+", "")
 
 
-def number_forms(number: str, country_code: str, trunk: str = "0") -> list[str]:
-    """Every presentation of `number` that a caller ID may arrive in.
-
-    The watch compares the calling number as a string, so a subscriber stored
-    only as `+261340000000` does not ring when the network presents
-    `0340000000`. This turns whichever form was typed into both, international
-    first -- that is the one worth marking as SOS, because a second SOS entry
-    would dial the same person twice.
-
-    Anything it cannot map confidently comes back untouched: short codes,
-    foreign numbers, and digit strings outside a plausible subscriber length.
-    Storing what was typed is honest; inventing a country code for it is not.
-    With no country code configured only the input comes back, which is what
-    makes adding refuse instead of storing half a contact.
-    """
-    compact = re.sub(r"[\s\-()]", "", number.strip())
-    digits = compact.lstrip("+")
-    cc = re.sub(r"\D", "", country_code or "")
-    trunk = (trunk or "").strip()
-    if not compact or not digits.isdigit() or not cc:
-        return [compact]
-
-    if compact.startswith("+"):
-        # Another country's number: we do not know its trunk prefix, and
-        # guessing one would break an entry that works today.
-        if not digits.startswith(cc):
-            return [compact]
-        nsn = digits[len(cc):]
-    elif trunk and digits.startswith(trunk) and len(digits) > len(trunk):
-        nsn = digits[len(trunk):]
-    elif digits.startswith(cc) and len(digits) > len(cc):
-        nsn = digits[len(cc):]
-    else:
-        nsn = digits
-
-    # Outside this range it is a short code or a typo, not a subscriber number.
-    if not 6 <= len(nsn) <= 12:
-        return [compact]
-
-    forms = [f"+{cc}{nsn}"]
-    if trunk:
-        forms.append(f"{trunk}{nsn}")
-    return list(dict.fromkeys(forms))
-
-
-def _heal_forms(contacts: list[dict], country_code: str, trunk: str) -> list[dict]:
+def _heal_forms(contacts: list[dict], region: str | None) -> list[dict]:
     """Fill in the presentation(s) a stored entry is missing.
 
     The watch cannot be read back, so the stored copy is the only evidence of
     what the child can actually receive. An entry written before this expansion
-    existed -- or through the raw `set_local_contacts` service -- may carry one
-    form only, and that is a silent hole: her calls ring in one presentation
-    and not the other. Every write therefore re-derives the full set.
+    existed -- or pushed raw through `set_local_contacts` -- may carry one form
+    only, and that is a silent hole: her calls ring in one presentation and not
+    the other. Every write therefore re-derives the full set.
 
-    Entries are kept in place, so the order on the watch does not change.
+    An entry that no longer validates is kept exactly as typed. A repair pass
+    must never be the reason a number leaves the whitelist: the parser not
+    knowing a number is not the same as the person being gone.
+
+    Entries stay in place, so the order on the watch does not change.
     Duplicates already in the list collapse, and only the international form
     keeps an SOS flag.
     """
     out: list[dict] = []
     seen: set[str] = set()
     for contact in contacts:
-        forms = number_forms(contact.get("number") or "", country_code, trunk)
+        stored = contact.get("number") or ""
+        forms = number_forms(stored, region) or [normalize(stored)]
         for index, form in enumerate(forms):
             key = _number_key(form)
             if key in seen:

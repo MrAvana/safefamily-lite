@@ -4,11 +4,11 @@ The watch stores a list of contacts under CmdCode 9016. The app always
 sends the full list when adding/editing/removing.
 
 Wire format (what we send):
-    [{"icon": 1, "name": "Dad", "number": "+15551234567",
+    [{"icon": 1, "name": "Dad", "number": "+261340000000",
       "relation": "", "shortNumber": "", "sosFlag": 1}]
 
 Stored format (what CommandList returns):
-    [{"Icon": "1", "Name": "Dad", "Number": "+15551234567",
+    [{"Icon": "1", "Name": "Dad", "Number": "+261340000000",
       "Relation": null, "ShortNumber": "", "SosFlag": 1,
       "DevicePhoneNumber": null, "AskNumber": null}]
 

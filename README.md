@@ -195,7 +195,7 @@ action: safefamily_lite.add_local_contact
 data:
   imei: "123456789012345"
   name: Dad
-  number: "+15551234567"
+  number: "+261340000000"
   icon: Father    # or 0-6; see the table below
   sos: true
 ```
@@ -234,11 +234,16 @@ Two things to know before editing the list:
   as `+261340000000` or `0340000000` depending on how the call is routed, so
   `add_local_contact` writes both: type either one and the pair is stored,
   international first and that one marked SOS, because a second SOS entry would
-  dial the same person twice. This needs the country calling code and domestic
-  trunk prefix set once under *Configure* on the integration entry. Without
-  them, adding refuses rather than storing half a contact — removing still
-  works. Entries written before that setting existed are healed the next time
-  anything is added or removed.
+  dial the same person twice.
+
+  The country comes from Home Assistant's own setting — *Settings → System →
+  General → Country* — so there is nothing to configure here, and the number is
+  validated against that country's numbering plan before anything is written. A
+  mistyped number is refused instead of stored as an entry that will never ring,
+  and the message says what was understood. A number from another country keeps
+  its `+` form only, since that is how an international call arrives. Entries
+  written before this existed are healed the next time anything is added or
+  removed.
 
   Two presentations mean two of the 13 slots per contact, so six people fill
   the list.

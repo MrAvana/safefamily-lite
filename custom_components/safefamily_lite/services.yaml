@@ -241,7 +241,7 @@ add_device:
       example: "My Watch"
       selector: { text: {} }
     relation_phone:
-      example: "+15551234567"
+      example: "+261340000000"
       selector: { text: {} }
     info:
       selector: { text: {} }
@@ -264,7 +264,7 @@ add_contact:
   fields:
     device_id:     { required: true, selector: { number: { min: 1, mode: box } } }
     name:          { required: true, example: "Dad", selector: { text: {} } }
-    number:        { required: true, example: "+15551234567", selector: { text: {} } }
+    number:        { required: true, example: "+261340000000", selector: { text: {} } }
     icon:
       selector:
         select:
@@ -286,7 +286,7 @@ remove_contact:
   fields:
     device_id:  { required: true, selector: { number: { min: 1, mode: box } } }
     name:       { example: "Dad", selector: { text: {} } }
-    number:     { example: "+15551234567", selector: { text: {} } }
+    number:     { example: "+261340000000", selector: { text: {} } }
 
 set_contacts:
   name: Set contacts (raw JSON)
@@ -314,7 +314,7 @@ set_local_contacts:
       selector: { text: {} }
     contacts_json:
       required: true
-      example: '[{"name":"Dad","number":"+15551234567","icon":0,"is_sos":true}]'
+      example: '[{"name":"Dad","number":"+261340000000","icon":0,"is_sos":true}]'
       selector: { text: { multiline: true } }
 
 add_local_contact:
@@ -323,7 +323,10 @@ add_local_contact:
     Add one entry, keeping the rest. Both the international (+261...) and
     domestic (0...) forms of the number are stored, because a caller ID may
     present either and the watch compares strings; only the international one
-    is marked SOS. The list is replaced wholesale on the wire, so this reads
+    is marked SOS. The number is validated against Home Assistant's country
+    setting (Settings > System > General > Country), and refused if it cannot
+    be a real subscriber number, so a typo cannot be stored as an entry that
+    will never ring. The list is replaced wholesale on the wire, so this reads
     the stored copy, replaces any entry for the same subscriber, and writes
     the result back.
   fields:
@@ -332,7 +335,7 @@ add_local_contact:
       example: "123456789012345"
       selector: { text: {} }
     name:      { required: true, example: "Dad", selector: { text: {} } }
-    number:    { required: true, example: "+15551234567", selector: { text: {} } }
+    number:    { required: true, example: "+261340000000", selector: { text: {} } }
     icon:
       example: "Father"
       selector:
@@ -361,4 +364,4 @@ remove_local_contact:
       required: true
       example: "123456789012345"
       selector: { text: {} }
-    number:    { required: true, example: "+15551234567", selector: { text: {} } }
+    number:    { required: true, example: "+261340000000", selector: { text: {} } }
