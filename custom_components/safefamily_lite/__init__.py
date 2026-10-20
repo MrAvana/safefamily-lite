@@ -114,6 +114,10 @@ SERVICE_SET_CONTACTS = "set_contacts"
 SERVICE_SET_LOCAL_CONTACTS = "set_local_contacts"
 SERVICE_ADD_LOCAL_CONTACT = "add_local_contact"
 SERVICE_REMOVE_LOCAL_CONTACT = "remove_local_contact"
+SERVICE_SEND_LOCAL_VOICE = "send_local_voice"
+
+ATTR_VOICE_URL = "url"
+ATTR_VOICE_NOTIFY = "notify"
 
 ATTR_DEVICE_ID = "device_id"
 ATTR_CMD_CODE = "cmd_code"
@@ -226,6 +230,17 @@ REMOVE_LOCAL_CONTACT_SCHEMA = vol.Schema(
         # is not unique. The two presentations of one subscriber are separate
         # entries, so this removes one at a time.
         vol.Required(ATTR_CONTACT_NUMBER): cv.string,
+    }
+)
+
+SEND_LOCAL_VOICE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_IMEI): cv.string,
+        # A URL the Home Assistant process can fetch. `notify` asks for the
+        # immediate IWBP27 alert; the default is a silent queue because the
+        # watch may play that alert aloud.
+        vol.Required(ATTR_VOICE_URL): cv.string,
+        vol.Optional(ATTR_VOICE_NOTIFY, default=False): cv.boolean,
     }
 )
 
@@ -701,6 +716,20 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN, SERVICE_REMOVE_LOCAL_CONTACT, _handle_remove_local_contact,
             schema=REMOVE_LOCAL_CONTACT_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_LOCAL_VOICE):
+
+        async def _handle_send_local_voice(call: ServiceCall) -> None:
+            await _explain_refusal(coordinator.async_send_voice(
+                call.data[ATTR_IMEI],
+                call.data[ATTR_VOICE_URL],
+                notify=call.data.get(ATTR_VOICE_NOTIFY, False),
+            ))
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_SEND_LOCAL_VOICE, _handle_send_local_voice,
+            schema=SEND_LOCAL_VOICE_SCHEMA,
         )
 
     _LOGGER.info(
@@ -1203,6 +1232,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SET_LOCAL_CONTACTS,
                 SERVICE_ADD_LOCAL_CONTACT,
                 SERVICE_REMOVE_LOCAL_CONTACT,
+                SERVICE_SEND_LOCAL_VOICE,
             ):
                 # Only the services this backend mode registered exist; the
                 # other set belongs to the vendor cloud and removing it blind

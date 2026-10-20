@@ -102,8 +102,8 @@ async def async_setup_entry(
     coord: SafeFamilyCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = []
 
-    # Local backend mode: only battery, last contact and link state exist --
-    # the vendor-only sensors below would all be empty.
+    # Local backend mode: only battery, last contact, phonebook, voice and link
+    # state exist -- the vendor-only sensors below would all be empty.
     if isinstance(coord, LocalCoordinator):
         add(local_sensors(coord))
         return

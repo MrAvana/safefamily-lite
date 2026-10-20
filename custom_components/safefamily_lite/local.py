@@ -12,16 +12,19 @@ stores positions, battery and heartbeats and offers an HTTP JSON API:
     POST /locate?imei=               ask the watch for a real-time fix
     POST /photo?imei=                take a photo now (refused if offline)
     GET  /photos/latest              the newest photo, as image/jpeg
+    GET  /voices/latest?imei=        the newest AMR the watch sent
+    POST /voice/send?imei=           queue an AMR for the watch (raw body)
     POST /contacts?imei=             replace the watch's phonebook
 
 (The backend also serves /locations history, /interval and /cmd; nothing in
 this integration needs them yet.)
 
 Only what that backend can serve is exposed here: the position (device_tracker),
-battery and last-contact sensors, the tunnel sensor, the phonebook sensor, the
-locate / refresh / restart / take-photo buttons, the newest photo, plus services
-to write the phonebook. Everything else in this integration (chat, geofences,
-class mode) needs the vendor cloud and is untouched by this mode.
+battery, last-contact, link, phonebook and voice sensors, the locate / refresh /
+restart / take-photo buttons, the newest photo, plus services to write the
+phonebook and send a voice message. Everything else in this integration (the
+vendor chat history, geofences, class mode) needs the vendor cloud and is
+untouched by this mode.
 
 The phonebook deserves its own note. It is the watch's call whitelist: with
 "Protect from Stranger Calls" on, a number not in it is rejected, so an empty
@@ -219,6 +222,59 @@ class LocalApi:
         except (aiohttp.ClientError, TimeoutError) as err:
             raise LocalApiError(f"/photos/latest failed: {err}") from err
 
+    async def voice_latest(self, session: aiohttp.ClientSession,
+                           imei: str) -> bytes | None:
+        """The newest AMR message the watch sent, or None if there is none."""
+        url = f"{self.base_url}/voices/latest"
+        try:
+            async with session.get(
+                url, params={"imei": imei}, timeout=REQUEST_TIMEOUT
+            ) as resp:
+                if resp.status == 404:
+                    return None
+                if resp.status >= 400:
+                    body = (await resp.text())[:200]
+                    raise LocalApiError(
+                        f"/voices/latest -> HTTP {resp.status}: {body}",
+                        400 <= resp.status < 500,
+                    )
+                return await resp.read()
+        except LocalApiError:
+            raise
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise LocalApiError(f"/voices/latest failed: {err}") from err
+
+    async def send_voice(self, session: aiohttp.ClientSession, imei: str,
+                         data: bytes, notify: bool = False) -> dict:
+        """Queue an AMR file for the watch.
+
+        `notify` is deliberately false by default: an immediate `IWBP27` may
+        play a sound on the wrist, which is not acceptable during school.
+        """
+        url = f"{self.base_url}/voice/send"
+        params = {"imei": imei}
+        if notify:
+            params["notify"] = "1"
+        try:
+            async with session.post(
+                url,
+                params=params,
+                data=data,
+                headers={"Content-Type": "audio/amr"},
+                timeout=REQUEST_TIMEOUT,
+            ) as resp:
+                if resp.status >= 400:
+                    body = (await resp.text())[:200]
+                    raise LocalApiError(
+                        f"/voice/send -> HTTP {resp.status}: {body}",
+                        400 <= resp.status < 500,
+                    )
+                return await resp.json(content_type=None)
+        except LocalApiError:
+            raise
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise LocalApiError(f"/voice/send failed: {err}") from err
+
     async def reboot(self, session: aiohttp.ClientSession, imei: str) -> dict:
         return await self._request(session, "POST", "/reboot", imei=imei)
 
@@ -350,6 +406,9 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             # The backend attaches the newest photo to the watch it belongs
             # to; `None` means no photo has been taken yet.
             "photo": payload.get("photo"),
+            # Voice is the same shape: unread count and the newest message
+            # metadata. `None` means a backend too old to serve voice.
+            "voice": payload.get("voice"),
         }
 
     def device_info(self, imei: str) -> dict:
@@ -386,6 +445,40 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         """
         await self.api.take_photo(self._session, imei)
         _LOGGER.debug("Photo requested for %s", imei)
+
+    async def async_send_voice(self, imei: str, url: str,
+                               notify: bool = False) -> dict:
+        """Fetch an AMR file and queue it for the watch.
+
+        The service takes a URL rather than a Home Assistant media id because
+        the backend is a separate process: `http://homeassistant.local:8123/
+        local/...` is reachable from here, a path inside the HA container is
+        not necessarily reachable from the backend. `notify` remains false by
+        default so a queued message cannot make the wrist chirp in class.
+        """
+        if len(url) > 2048:
+            raise LocalApiError("voice URL is too long", refusal=True)
+        try:
+            async with self._session.get(url, timeout=REQUEST_TIMEOUT) as resp:
+                if resp.status >= 400:
+                    raise LocalApiError(
+                        f"voice URL -> HTTP {resp.status}",
+                        refusal=True,
+                    )
+                data = await resp.content.read(128 * 1024 + 1)
+        except LocalApiError:
+            raise
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise LocalApiError(f"could not fetch voice URL: {err}") from err
+        if len(data) > 128 * 1024:
+            raise LocalApiError(
+                "voice file is larger than 128 KiB", refusal=True
+            )
+        if not data:
+            raise LocalApiError("voice file is empty", refusal=True)
+        return await self.api.send_voice(
+            self._session, imei, data, notify=notify
+        )
 
     async def async_set_contacts(
         self, imei: str, contacts: list[dict], replace_unknown: bool = False
@@ -761,6 +854,53 @@ class LocalContactsSensor(_LocalEntity, SensorEntity):
         }
 
 
+class LocalVoiceSensor(_LocalEntity, SensorEntity):
+    """Voice messages the watch sent, and what is queued for it.
+
+    `unread` is the number of messages the parent has not fetched yet. The
+    backend marks one read when `/voices/latest` is served, so this is a real
+    inbox count rather than a total. The newest message's metadata is exposed
+    as attributes; the audio itself is fetched on demand by a dashboard card
+    or automation, never embedded in the state machine.
+    """
+
+    _attr_translation_key = "voice_messages"
+    _attr_icon = "mdi:microphone-message"
+
+    def __init__(self, coord: LocalCoordinator, imei: str) -> None:
+        super().__init__(coord, imei, "voice_messages")
+
+    @property
+    def _voice(self) -> dict:
+        return self._dev.get("voice") or {}
+
+    @property
+    def native_value(self):
+        value = self._voice.get("unread")
+        return value if isinstance(value, int) else None
+
+    @property
+    def extra_state_attributes(self):
+        voice = self._voice
+        latest = voice.get("latest") or {}
+        return {
+            "unread": voice.get("unread"),
+            "pending": voice.get("pending"),
+            "last_voice_id": latest.get("id"),
+            "last_voice_taken": latest.get("taken"),
+            "last_voice_received": latest.get("received"),
+            "last_voice_bytes": latest.get("bytes"),
+            "last_voice_name": latest.get("name"),
+            # The backend endpoint, on the LAN only. The card plays this URL
+            # on demand; the AMR bytes never enter the state machine.
+            "audio_url": (
+                f"{self.coordinator.url}/voices/latest?imei={self._imei}"
+                if latest else None
+            ),
+            "imei": self._imei,
+        }
+
+
 class LocalOnlineSensor(_LocalEntity, SensorEntity):
     _attr_translation_key = "backend_state"
     _attr_device_class = SensorDeviceClass.ENUM
@@ -960,7 +1100,8 @@ def local_sensors(coord: LocalCoordinator) -> list[SensorEntity]:
         entity(coord, imei)
         for imei in (coord.data or {})
         for entity in (LocalBatterySensor, LocalLastContactSensor,
-                       LocalContactsSensor, LocalOnlineSensor)
+                       LocalContactsSensor, LocalVoiceSensor,
+                       LocalOnlineSensor)
     ]
 
 
