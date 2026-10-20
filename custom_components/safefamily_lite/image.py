@@ -25,6 +25,7 @@ from homeassistant.util import dt as dt_util
 from .chat import emoji_filename, is_emoji_code
 from .const import DOMAIN
 from .coordinator import SafeFamilyCoordinator
+from .local import LocalCoordinator, local_images
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +36,13 @@ PHOTO_FETCH_TIMEOUT = aiohttp.ClientTimeout(total=20)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback
 ) -> None:
-    coord: SafeFamilyCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coord = hass.data[DOMAIN][entry.entry_id]
+    if isinstance(coord, LocalCoordinator):
+        # Local mode has one photo: the newest the backend holds. There are no
+        # emoji stickers or photo history to show, because nothing produces
+        # them without the vendor cloud.
+        add(local_images(coord, hass))
+        return
     entities = []
     for device_id, dev in (coord.data or {}).items():
         entities.append(SafeFamilyLastEmojiImage(coord, hass, device_id, dev))

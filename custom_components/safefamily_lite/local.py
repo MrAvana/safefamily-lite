@@ -10,16 +10,18 @@ stores positions, battery and heartbeats and offers an HTTP JSON API:
     GET  /state                      current device + position, keyed by IMEI
     GET  /contacts?imei=             the phonebook last written to the watch
     POST /locate?imei=               ask the watch for a real-time fix
+    POST /photo?imei=                take a photo now (refused if offline)
+    GET  /photos/latest              the newest photo, as image/jpeg
     POST /contacts?imei=             replace the watch's phonebook
 
 (The backend also serves /locations history, /interval and /cmd; nothing in
 this integration needs them yet.)
 
 Only what that backend can serve is exposed here: the position (device_tracker),
-battery and last-contact sensors, the tunnel sensor, the phonebook sensor, and
-the locate / refresh / restart buttons, plus services to write the phonebook.
-Everything else in this integration (chat, geofences, photos, class mode) needs
-the vendor cloud and is untouched by this mode.
+battery and last-contact sensors, the tunnel sensor, the phonebook sensor, the
+locate / refresh / restart / take-photo buttons, the newest photo, plus services
+to write the phonebook. Everything else in this integration (chat, geofences,
+class mode) needs the vendor cloud and is untouched by this mode.
 
 The phonebook deserves its own note. It is the watch's call whitelist: with
 "Protect from Stranger Calls" on, a number not in it is rejected, so an empty
@@ -44,6 +46,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.components.button import ButtonEntity
 from homeassistant.components.device_tracker import TrackerEntity
+from homeassistant.components.image import ImageEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -52,6 +55,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -188,6 +192,33 @@ class LocalApi:
     async def locate(self, session: aiohttp.ClientSession, imei: str) -> dict:
         return await self._request(session, "POST", "/locate", imei=imei)
 
+    async def take_photo(self, session: aiohttp.ClientSession, imei: str) -> dict:
+        """Ask the watch to take a picture now.
+
+        The backend refuses if the watch has no live session; a queued request
+        would shoot whatever is in front of it whenever it next logs in.
+        """
+        return await self._request(session, "POST", "/photo", imei=imei)
+
+    async def photo(self, session: aiohttp.ClientSession) -> bytes | None:
+        """The newest photo the backend holds, or None if there is none yet."""
+        url = f"{self.base_url}/photos/latest"
+        try:
+            async with session.get(url, timeout=REQUEST_TIMEOUT) as resp:
+                if resp.status == 404:
+                    return None
+                if resp.status >= 400:
+                    body = (await resp.text())[:200]
+                    raise LocalApiError(
+                        f"/photos/latest -> HTTP {resp.status}: {body}",
+                        400 <= resp.status < 500,
+                    )
+                return await resp.read()
+        except LocalApiError:
+            raise
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise LocalApiError(f"/photos/latest failed: {err}") from err
+
     async def reboot(self, session: aiohttp.ClientSession, imei: str) -> dict:
         return await self._request(session, "POST", "/reboot", imei=imei)
 
@@ -316,6 +347,9 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             "last_seen": device.get("last_seen"),
             "last_contact": last_contact,
             "online": online,
+            # The backend attaches the newest photo to the watch it belongs
+            # to; `None` means no photo has been taken yet.
+            "photo": payload.get("photo"),
         }
 
     def device_info(self, imei: str) -> dict:
@@ -341,6 +375,17 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         """
         await self.api.reboot(self._session, imei)
         _LOGGER.debug("Reboot requested for %s", imei)
+
+    async def async_take_photo(self, imei: str) -> None:
+        """Ask the watch for a picture; the next poll picks it up.
+
+        The watch acknowledges within seconds and uploads a small JPEG in a
+        few pieces. The backend assembles it, so this returns as soon as the
+        request is accepted -- the button's delayed refresh waits for the
+        image, not the command.
+        """
+        await self.api.take_photo(self._session, imei)
+        _LOGGER.debug("Photo requested for %s", imei)
 
     async def async_set_contacts(
         self, imei: str, contacts: list[dict], replace_unknown: bool = False
@@ -819,6 +864,93 @@ class LocalRebootButton(_LocalEntity, ButtonEntity):
         await self.coordinator.async_request_refresh()
 
 
+class LocalPhotoButton(_LocalEntity, ButtonEntity):
+    """Take a picture with the watch camera.
+
+    The command is silent: the watch takes the photo and uploads it over the
+    session it already holds, with nothing shown or sounded on the wrist.
+    """
+
+    _attr_translation_key = "take_photo"
+    _attr_icon = "mdi:camera"
+
+    def __init__(self, coord: LocalCoordinator, imei: str) -> None:
+        super().__init__(coord, imei, "btn_take_photo")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_take_photo(self._imei)
+
+        async def _refresh(_now) -> None:
+            await self.coordinator.async_request_refresh()
+
+        # Shooting takes ~13 s and the pieces follow within seconds. One
+        # delayed poll lands after that; the regular interval covers a watch
+        # that is slower to answer.
+        async_call_later(self.hass, 25, _refresh)
+        await self.coordinator.async_request_refresh()
+
+
+class LocalPhotoImage(_LocalEntity, ImageEntity):
+    """The newest photo the watch sent, as kept by the backend.
+
+    Only one photo is stored -- the backend replaces `latest.jpg` -- so this
+    is a view of "what the watch saw last", not a gallery. `image_last_updated`
+    is when the backend received it, which is what makes Home Assistant fetch
+    the new bytes; the capture time is exposed as an attribute.
+    """
+
+    _attr_translation_key = "last_photo"
+    _attr_content_type = "image/jpeg"
+
+    def __init__(self, coord: LocalCoordinator, hass: HomeAssistant,
+                 imei: str) -> None:
+        _LocalEntity.__init__(self, coord, imei, "image_last_photo")
+        ImageEntity.__init__(self, hass)
+        self._session = async_get_clientsession(hass)
+        self._bytes: bytes | None = None
+        self._bytes_key: str | None = None
+
+    @property
+    def _photo(self) -> dict | None:
+        return self._dev.get("photo")
+
+    @property
+    def image_last_updated(self):
+        meta = self._photo
+        if not meta:
+            return None
+        parsed = _parse_ts(meta.get("received") or meta.get("taken") or "")
+        return None if parsed.year == 1 else parsed
+
+    async def async_image(self) -> bytes | None:
+        meta = self._photo
+        if not meta:
+            return None
+        key = str(meta.get("received") or meta.get("taken") or "")
+        if self._bytes is not None and key == self._bytes_key:
+            return self._bytes
+        try:
+            data = await self.coordinator.api.photo(self._session)
+        except LocalApiError as err:
+            _LOGGER.warning("Could not fetch the latest photo: %s", err)
+            return self._bytes
+        if not data:
+            return None
+        self._bytes = data
+        self._bytes_key = key
+        return data
+
+    @property
+    def extra_state_attributes(self):
+        meta = self._photo or {}
+        return {
+            "photo_taken": meta.get("taken"),
+            "photo_received": meta.get("received"),
+            "photo_bytes": meta.get("bytes"),
+            "imei": self._imei,
+        }
+
+
 def local_trackers(coord: LocalCoordinator) -> list[LocalTracker]:
     return [LocalTracker(coord, imei) for imei in (coord.data or {})]
 
@@ -840,5 +972,10 @@ def local_buttons(coord: LocalCoordinator) -> list[ButtonEntity]:
     return [
         entity(coord, imei)
         for imei in (coord.data or {})
-        for entity in (LocalLocateButton, LocalRefreshButton, LocalRebootButton)
+        for entity in (LocalLocateButton, LocalRefreshButton, LocalRebootButton,
+                       LocalPhotoButton)
     ]
+
+
+def local_images(coord: LocalCoordinator, hass: HomeAssistant) -> list[ImageEntity]:
+    return [LocalPhotoImage(coord, hass, imei) for imei in (coord.data or {})]

@@ -66,13 +66,14 @@ PLATFORMS = [
 ]
 
 # Local backend mode only wires up what a private backend can actually serve.
-# Every other platform below builds entities from vendor data (contacts, chat,
-# geofences, photos, class schedules) that simply does not exist locally.
+# Everything else in this integration (chat, geofences, class schedules) builds
+# entities from vendor data that does not exist locally.
 LOCAL_PLATFORMS = [
     "sensor",
     "binary_sensor",
     "device_tracker",
     "button",
+    "image",
 ]
 
 SERVICE_SEND_COMMAND = "send_command"
