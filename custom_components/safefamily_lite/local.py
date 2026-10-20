@@ -157,11 +157,32 @@ class LocalApi:
         return await self._request(session, "GET", "/contacts", imei=imei)
 
     async def set_contacts(
-        self, session: aiohttp.ClientSession, imei: str, contacts: list[dict]
+        self,
+        session: aiohttp.ClientSession,
+        imei: str,
+        contacts: list[dict],
+        required: list[str],
+        replace_unknown: bool = False,
     ) -> dict:
-        """Replace the whole phonebook. A refused list comes back as 409."""
+        """Replace the whole phonebook, declaring what it may not drop.
+
+        `required` names the numbers that must survive this write. It travels
+        with the list so the backend can refuse a push that removes the
+        guardian, and the backend remembers it for later pushes. A refused list
+        comes back as 409.
+        """
+        params = {"imei": imei}
+        if replace_unknown:
+            # Only the whole-list service sets this: after a lost database the
+            # backend has no record of the watch's phonebook, and a read-modify-
+            # write add would otherwise replace 13 slots with one entry.
+            params["replace_unknown"] = "1"
         return await self._request(
-            session, "POST", "/contacts", json_body={"contacts": contacts}, imei=imei
+            session,
+            "POST",
+            "/contacts",
+            json_body={"contacts": contacts, "required": required},
+            **params,
         )
 
     async def locate(self, session: aiohttp.ClientSession, imei: str) -> dict:
@@ -321,14 +342,36 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         await self.api.reboot(self._session, imei)
         _LOGGER.debug("Reboot requested for %s", imei)
 
-    async def async_set_contacts(self, imei: str, contacts: list[dict]) -> dict:
-        """Write a whole phonebook, then re-read so the sensor is honest.
+    async def async_set_contacts(
+        self, imei: str, contacts: list[dict], replace_unknown: bool = False
+    ) -> dict:
+        """Write a whole phonebook, declaring the guardian with it.
 
-        The backend refuses a list that drops a number it is configured to
-        protect, and that refusal travels back as a `LocalApiError` -- which is
-        what the caller should see, rather than a silent no-op.
+        The guard is derived from the list itself: every entry marked `is_sos`
+        is the guardian, and every presentation of that number is sent so a
+        caller ID arriving in either form keeps working. The backend has no
+        phone-number library, so it cannot expand the local form itself; a
+        form the client does not declare is a form it does not protect.
+
+        The backend refuses a list that drops a declared number, and that
+        refusal travels back as a `LocalApiError` -- which is what the caller
+        should see, rather than a silent no-op.
         """
-        result = await self.api.set_contacts(self._session, imei, contacts)
+        region = self.hass.config.country
+        required = _guardian_forms(contacts, region)
+        if not required:
+            raise LocalApiError(
+                "the phonebook has no SOS contact, so there is no guardian to "
+                "protect; mark the guardian's entry with is_sos: true",
+                refusal=True,
+            )
+        result = await self.api.set_contacts(
+            self._session,
+            imei,
+            contacts,
+            required,
+            replace_unknown=replace_unknown,
+        )
         await self.async_request_refresh()
         return result
 
@@ -361,13 +404,28 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         info = await self.api.contacts(self._session, imei)
         contacts = list(info.get("contacts") or [])
         wanted = {_number_key(form) for form in forms}
+        # Editing the guardian's own entry must not silently clear the flag:
+        # this service defaults `sos` to false, so "not asked" and "asked to
+        # clear" are the same value here.
+        was_sos = any(
+            contact.get("is_sos")
+            and _number_key(contact.get("number") or "") in wanted
+            for contact in contacts
+        )
+        if sos:
+            # One SOS button, one guardian: adding a new SOS contact moves the
+            # flag instead of leaving two. The old entry stays in the list, so
+            # this write still contains it and passes the guard; it simply
+            # stops being the number the guard pins, which is what makes the
+            # guardian movable at all.
+            contacts = [dict(contact, is_sos=False) for contact in contacts]
 
         entries = [
             {
                 "name": name,
                 "number": form,
                 "icon": int(icon),
-                "is_sos": bool(sos) and index == 0,
+                "is_sos": bool(sos or was_sos) and index == 0,
             }
             for index, form in enumerate(forms)
         ]
@@ -418,7 +476,15 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         ]
         if len(kept) == len(contacts):
             raise LocalApiError(f"{number} is not in the phonebook", refusal=True)
-        return await self.async_set_contacts(imei, _heal_forms(kept, region))
+        remaining = _heal_forms(kept, region)
+        if not _guardian_forms(remaining, region):
+            raise LocalApiError(
+                f"{number} is the only SOS contact; the phonebook must keep a "
+                "guardian, so add the new guardian with sos: true before "
+                "removing this one",
+                refusal=True,
+            )
+        return await self.async_set_contacts(imei, remaining)
 
 
 def _number_key(number: str) -> str:
@@ -428,6 +494,27 @@ def _number_key(number: str) -> str:
     number can arrive in either form depending on how a call is routed.
     """
     return normalize(number).replace("+", "")
+
+
+def _guardian_forms(contacts: list[dict], region: str | None) -> list[str]:
+    """Every presentation of the numbers the SOS button dials.
+
+    This is the guard sent with each push. It is computed here rather than on
+    the backend because expanding `+261...` into `0...` needs a phone-number
+    library and the country, and the backend deliberately has neither. A form
+    that is not declared is not protected, so each SOS entry is expanded with
+    `number_forms`; an entry the parser cannot read is kept verbatim rather
+    than dropped from the guard, exactly as healing keeps it in the list.
+    """
+    out: list[str] = []
+    for contact in contacts:
+        if not contact.get("is_sos"):
+            continue
+        number = contact.get("number") or ""
+        for form in number_forms(number, region) or [normalize(number)]:
+            if form and form not in out:
+                out.append(form)
+    return out
 
 
 def _heal_forms(contacts: list[dict], region: str | None) -> list[dict]:

@@ -248,10 +248,21 @@ Two things to know before editing the list:
   Two presentations mean two of the 13 slots per contact, so six people fill
   the list.
 
-The backend refuses a list that drops a number it is configured to protect
-(`CONTACT_REQUIRED`), and the call now fails with the backend's own reason in
-the UI — *refusing to remove the guardian number(s)* — rather than the bare
-"unknown error" a raw exception used to produce.
+Every write declares the guardian with the list: the entry marked SOS is
+expanded to every form of its number and sent as the numbers that may not be
+dropped, and the backend remembers that guard for later writes. A push that
+would remove one fails with the backend's own reason in the UI — *refusing to
+remove the guardian number(s)* — rather than the bare "unknown error" a raw
+exception used to produce. `sos: true` moves the flag to the new entry (the
+watch has one SOS button), so the guardian can be changed: add the new one
+first, then remove the old one. A list with no SOS entry is refused, because
+there would be nothing to protect.
+
+`set_local_contacts` is the raw escape hatch and therefore has to include an
+entry with `"is_sos": true`. It also replaces the phonebook even when the
+backend has no record of one, which is what makes it the deliberate way to
+rebuild a list after `state.db` is lost; an add or remove in that state is
+refused instead, since it would send a one-entry list over all 13 slots.
 
 ### What is not available
 

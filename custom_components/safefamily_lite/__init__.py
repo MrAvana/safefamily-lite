@@ -663,7 +663,9 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     f"contacts_json is not valid JSON: {err}"
                 ) from err
             await _explain_refusal(
-                coordinator.async_set_contacts(call.data[ATTR_IMEI], contacts)
+                coordinator.async_set_contacts(
+                    call.data[ATTR_IMEI], contacts, replace_unknown=True
+                )
             )
 
         hass.services.async_register(

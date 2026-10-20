@@ -306,7 +306,11 @@ set_local_contacts:
     Replace the watch's whole phonebook, as a JSON array of
     {"name": ..., "number": ..., "icon": 0-8, "is_sos": true|false}.
     The watch cannot be read back, so the backend keeps this list and
-    re-writes it at every login. At most 13 entries.
+    re-writes it at every login. At most 13 entries. At least one entry must
+    be marked is_sos: that number is the guardian the backend refuses to lose,
+    and every form of it is protected. This service replaces the list even
+    when the backend has no record of one, so use it deliberately -- the
+    add/remove services refuse that case instead.
   fields:
     imei:
       required: true
@@ -328,7 +332,8 @@ add_local_contact:
     be a real subscriber number, so a typo cannot be stored as an entry that
     will never ring. The list is replaced wholesale on the wire, so this reads
     the stored copy, replaces any entry for the same subscriber, and writes
-    the result back.
+    the result back. With sos on, this entry becomes the guardian: the previous
+    SOS flag is cleared, because the watch has one SOS button.
   fields:
     imei:
       required: true
