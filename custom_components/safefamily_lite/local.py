@@ -39,6 +39,7 @@ they are not published as if they were measurements.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -116,6 +117,18 @@ class LocalApiError(Exception):
         self.refusal = refusal
 
 
+def _error_message(body: str) -> str:
+    """Read the backend's `error` field, not the surrounding HTTP JSON."""
+    body = (body or "").strip()
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return body[:500]
+    if isinstance(payload, dict) and payload.get("error"):
+        return str(payload["error"])
+    return body[:500]
+
+
 class LocalApi:
     """Thin client for the private backend's JSON API.
 
@@ -137,9 +150,9 @@ class LocalApi:
                 method, url, params=params, json=json_body, timeout=REQUEST_TIMEOUT
             ) as resp:
                 if resp.status >= 400:
-                    body = (await resp.text())[:200]
+                    body = await resp.text()
                     raise LocalApiError(
-                        f"{path} -> HTTP {resp.status}: {body}",
+                        f"{_error_message(body)} (HTTP {resp.status})",
                         400 <= resp.status < 500,
                     )
                 return await resp.json(content_type=None)

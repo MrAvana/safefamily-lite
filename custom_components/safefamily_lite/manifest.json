@@ -1,7 +1,7 @@
 {
   "domain": "safefamily_lite",
   "name": "SafeFamily Lite",
-  "version": "1.15.3",
+  "version": "1.15.4",
   "config_flow": true,
   "dependencies": ["tts"],
   "documentation": "https://github.com/MrAvana/safefamily-lite",
