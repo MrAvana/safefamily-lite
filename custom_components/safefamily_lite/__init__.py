@@ -1,4 +1,4 @@
-"""SafeFamily Lite integration entry point."""
+"""SafeFamily Lite integration entry point (local backend only)."""
 from __future__ import annotations
 
 import json
@@ -8,41 +8,16 @@ from pathlib import Path
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryError, HomeAssistantError
 try:  # `ServiceValidationError` arrived in 2023.7; keep older cores working.
     from homeassistant.exceptions import ServiceValidationError
 except ImportError:  # pragma: no cover - depends on the core version
     ServiceValidationError = HomeAssistantError  # type: ignore[misc,assignment]
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 
-from .alarms import (
-    ALARM_CODE,
-    DAY_NAMES,
-    default_alarm,
-    days_to_weeks,
-    parse_alarms_json,
-    weeks_to_days,
-)
-from .classmode import (
-    CLASS_MODE_CODE,
-    make_class_window,
-    parse_class_mode_json,
-)
-from .classschedule import (
-    CLASS_SCHEDULE_CODE,
-    DAY_NAMES as SCHEDULE_DAY_NAMES,
-    add_period,
-    delete_period,
-    encode_day_subjects,
-    normalize_day_param,
-    parse_periods,
-    parse_schedule,
-    parse_schedule_json,
-)
 from .const import CONF_LOCAL_URL, DOMAIN
 from .contacts import resolve_icon
-from .coordinator import SafeFamilyCoordinator
-from .local import LocalCoordinator, LocalApiError
+from .local import LocalApiError, LocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,63 +29,9 @@ PLATFORMS = [
     "binary_sensor",
     "device_tracker",
     "button",
-    "switch",
-    "number",
-    "geo_location",
-    "text",
-    "date",
-    "select",
-    "time",
-    "todo",
     "image",
 ]
 
-# Local backend mode only wires up what a private backend can actually serve.
-# Everything else in this integration (chat, geofences, class schedules) builds
-# entities from vendor data that does not exist locally.
-LOCAL_PLATFORMS = [
-    "sensor",
-    "binary_sensor",
-    "device_tracker",
-    "button",
-    "image",
-]
-
-SERVICE_SEND_COMMAND = "send_command"
-SERVICE_SAVE_PROFILE = "save_profile"
-SERVICE_GEOFENCE_CREATE = "geofence_create"
-SERVICE_GEOFENCE_DELETE = "geofence_delete"
-SERVICE_GEOFENCE_EDIT = "geofence_edit"
-SERVICE_GEOFENCE_LIST = "list_geofences"
-SERVICE_LOCATION_HISTORY = "get_location_history"
-SERVICE_SEND_TEXT = "send_text"
-SERVICE_SEND_EMOJI = "send_emoji"
-SERVICE_MARK_MESSAGE_READ = "mark_message_read"
-SERVICE_DELETE_MESSAGE = "delete_message"
-SERVICE_DELETE_ALL_MESSAGES = "delete_all_messages"
-SERVICE_SET_ALARMS = "set_alarms"
-SERVICE_ADD_ALARM = "add_alarm"
-SERVICE_DELETE_ALARM = "delete_alarm"
-SERVICE_SET_CLASS_MODE = "set_class_mode"
-SERVICE_ADD_CLASS_WINDOW = "add_class_window"
-SERVICE_CLEAR_CLASS_MODE = "clear_class_mode"
-SERVICE_SET_CLASS_SCHEDULE = "set_class_schedule"
-SERVICE_SET_CLASS_SUBJECT = "set_class_subject"
-SERVICE_CLEAR_CLASS_SCHEDULE = "clear_class_schedule"
-SERVICE_ADD_CLASS_PERIOD = "add_class_period"
-SERVICE_DELETE_CLASS_PERIOD = "delete_class_period"
-SERVICE_CHECK_DEVICE = "check_device"
-SERVICE_ADD_DEVICE = "add_device"
-SERVICE_REMOVE_DEVICE = "remove_device"
-SERVICE_ADD_CONTACT = "add_contact"
-SERVICE_REMOVE_CONTACT = "remove_contact"
-SERVICE_SET_CONTACTS = "set_contacts"
-
-# Local-backend mode has no `device_id` (that is a number the vendor cloud
-# assigns) and runs against a different coordinator class, so its phonebook
-# services are named separately rather than overloaded onto the cloud ones --
-# a shared name would have to accept both `device_id` and `imei` and would
-# describe itself wrongly in the UI.
 SERVICE_SET_LOCAL_CONTACTS = "set_local_contacts"
 SERVICE_ADD_LOCAL_CONTACT = "add_local_contact"
 SERVICE_REMOVE_LOCAL_CONTACT = "remove_local_contact"
@@ -125,91 +46,20 @@ ATTR_TTS_ENGINE = "engine"
 ATTR_TTS_LANGUAGE = "language"
 ATTR_TTS_OPTIONS = "options"
 
-ATTR_DEVICE_ID = "device_id"
-ATTR_CMD_CODE = "cmd_code"
-ATTR_PARAMS = "params"
-
-ATTR_NICKNAME = "nickname"
-ATTR_BIRTHDAY = "birthday"
-ATTR_GENDER = "gender"
-ATTR_GRADE = "grade"
-ATTR_CLASS = "class_name"
-ATTR_SCHOOL = "school"
-ATTR_HEIGHT = "height_cm"
-ATTR_WEIGHT = "weight_kg"
-ATTR_BLOOD_TYPE = "blood_type"
-ATTR_ALLERGIC = "allergic"
-ATTR_NOTES = "notes"
-ATTR_CONDITION = "condition"
-ATTR_DRUG = "drug"
-ATTR_ADDRESS = "address"
-ATTR_AREA = "area"
-ATTR_CELL_PHONE = "cell_phone"
-ATTR_CELL_PHONE_2 = "cell_phone_2"
-
-ATTR_FENCE_ID = "fence_id"
-ATTR_FENCE_NAME = "name"
-ATTR_LATITUDE = "latitude"
-ATTR_LONGITUDE = "longitude"
-ATTR_RADIUS = "radius"
-ATTR_FENCE_UPDATES = "updates"
-ATTR_REFRESH = "refresh"
-
-ATTR_START_TIME = "start_time"
-ATTR_END_TIME = "end_time"
-ATTR_SELECT_COUNT = "select_count"
-ATTR_TEXT = "text"
-ATTR_EMOJI = "emoji"
-ATTR_FILE_ID = "file_id"
-ATTR_ALARMS_JSON = "alarms_json"
-ATTR_ALARM_TIME = "time"
-ATTR_ALARM_DAYS = "days"
-ATTR_ALARM_INDEX = "index"
-
-ATTR_CLASS_WINDOWS_JSON = "windows_json"
-ATTR_CLASS_START = "start"
-ATTR_CLASS_END = "end"
-ATTR_CLASS_DAYS = "days"
-
-ATTR_SCHEDULE_JSON = "schedule_json"
-ATTR_SCHEDULE_DAY = "day"
-ATTR_SCHEDULE_PERIOD = "period"
-ATTR_SCHEDULE_SUBJECT = "subject"
-ATTR_PERIOD_POSITION = "position"
-
-ATTR_IMEI = "imei"
-# The GUI uses a device-registry id from the watch picker; `imei` remains
-# accepted for scripts and existing automations.
 ATTR_WATCH = "watch"
-ATTR_RELATION_NAME = "relation_name"
-ATTR_RELATION_PHONE = "relation_phone"
-ATTR_DEVICE_INFO = "info"
+ATTR_IMEI = "imei"
 
 ATTR_CONTACT_NAME = "name"
 ATTR_CONTACT_NUMBER = "number"
 ATTR_CONTACT_ICON = "icon"
 ATTR_CONTACT_SOS = "sos"
-ATTR_CONTACT_SHORT_NUMBER = "short_number"
 ATTR_CONTACTS_JSON = "contacts_json"
 
-EMOJI_URL_PATH = "/safefamily_lite/emojis"
-EMOJI_DIR = "custom_components/safefamily_lite/assets/emojis"
-CONTACT_ICON_URL_PATH = "/safefamily_lite/contact_icons"
-CONTACT_ICON_DIR = "custom_components/safefamily_lite/assets/contact_icons"
 WWW_URL_PATH = "/safefamily_lite/www"
 WWW_DIR = "custom_components/safefamily_lite/www"
 
-
-SEND_COMMAND_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_CMD_CODE): cv.string,
-        vol.Optional(ATTR_PARAMS, default=""): cv.string,
-    }
-)
-
-# Local mode addresses a watch by IMEI. `contacts_json` takes the same shape the
-# cloud service accepts: a JSON array of {name, number, icon, is_sos}.
+# Local mode addresses a watch by IMEI. `contacts_json` is a JSON array of
+# {name, number, icon, is_sos}.
 SET_LOCAL_CONTACTS_SCHEMA = vol.Schema(
     {
         vol.Optional(ATTR_WATCH): cv.string,
@@ -227,11 +77,8 @@ ADD_LOCAL_CONTACT_SCHEMA = vol.Schema(
         vol.Optional(ATTR_IMEI): cv.string,
         vol.Required(ATTR_CONTACT_NAME): cv.string,
         vol.Required(ATTR_CONTACT_NUMBER): cv.string,
-        # The avatar indices the cloud service uses: 0 Father, 1 Mother,
-        # 2 Sister, 3 Grandpa, 4 Granny, 5 Brother, 6+ Other. Accepts the
-        # friendly name too, via `resolve_icon`. The default is Other rather
-        # than Father, matching the vendor app: most entries are not the father,
-        # and a wrong avatar is easier to notice than to explain.
+        # 0 Father, 1 Mother, 2 Sister, 3 Grandpa, 4 Granny, 5 Brother,
+        # 6+ Other. Accepts the friendly name too, via `resolve_icon`.
         vol.Optional(ATTR_CONTACT_ICON, default=6): vol.Any(int, cv.string),
         vol.Optional(ATTR_CONTACT_SOS, default=False): cv.boolean,
     }
@@ -242,15 +89,18 @@ REMOVE_LOCAL_CONTACT_SCHEMA = vol.Schema(
         vol.Optional(ATTR_WATCH): cv.string,
         vol.Optional(ATTR_IMEI): cv.string,
         # Number only: it is the key the watch compares against, and the name
-        # is not unique. The two presentations of one subscriber are separate
-        # entries, so this removes one at a time.
+        # is not unique.
         vol.Required(ATTR_CONTACT_NUMBER): cv.string,
     }
 )
 
 SEND_LOCAL_VOICE_SCHEMA = vol.Schema(
     {
-        vol.Required(ATTR_IMEI): cv.string,
+        # The GUI sends the device-registry id from its watch picker. Scripts
+        # may keep sending `imei`, so both forms stay accepted; the handler
+        # requires exactly one of them.
+        vol.Optional(ATTR_WATCH): cv.string,
+        vol.Optional(ATTR_IMEI): cv.string,
         # A URL the Home Assistant process can fetch. `notify` asks for the
         # immediate IWBP27 alert; the default is a silent queue.
         vol.Required(ATTR_VOICE_URL): cv.string,
@@ -260,9 +110,6 @@ SEND_LOCAL_VOICE_SCHEMA = vol.Schema(
 
 SEND_TTS_VOICE_SCHEMA = vol.Schema(
     {
-        # The GUI sends the device-registry id from its watch picker. Scripts
-        # may keep sending `imei`, so both forms stay accepted; the handler
-        # requires exactly one of them.
         vol.Optional(ATTR_WATCH): cv.string,
         vol.Optional(ATTR_IMEI): cv.string,
         vol.Required(ATTR_TTS_MESSAGE): cv.string,
@@ -304,373 +151,19 @@ def _imei_from_call(call: ServiceCall, hass: HomeAssistant,
     return imei
 
 
-SAVE_PROFILE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Optional(ATTR_NICKNAME): cv.string,
-        vol.Optional(ATTR_BIRTHDAY): cv.string,
-        vol.Optional(ATTR_GENDER): vol.All(vol.Coerce(int), vol.In([0, 1, 2])),
-        vol.Optional(ATTR_GRADE): cv.string,
-        vol.Optional(ATTR_CLASS): cv.string,
-        vol.Optional(ATTR_SCHOOL): cv.string,
-        vol.Optional(ATTR_HEIGHT): vol.Coerce(int),
-        vol.Optional(ATTR_WEIGHT): vol.Coerce(float),
-        vol.Optional(ATTR_BLOOD_TYPE): cv.string,
-        vol.Optional(ATTR_ALLERGIC): cv.string,
-        vol.Optional(ATTR_NOTES): cv.string,
-        vol.Optional(ATTR_CONDITION): cv.string,
-        vol.Optional(ATTR_DRUG): cv.string,
-        vol.Optional(ATTR_ADDRESS): cv.string,
-        vol.Optional(ATTR_AREA): cv.string,
-        vol.Optional(ATTR_CELL_PHONE): cv.string,
-        vol.Optional(ATTR_CELL_PHONE_2): cv.string,
-    }
-)
-
-GEOFENCE_CREATE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_FENCE_NAME): cv.string,
-        vol.Required(ATTR_LATITUDE): vol.Coerce(float),
-        vol.Required(ATTR_LONGITUDE): vol.Coerce(float),
-        vol.Required(ATTR_RADIUS): vol.All(vol.Coerce(int), vol.Range(min=50, max=5000)),
-        vol.Optional(ATTR_ADDRESS, default=""): cv.string,
-    }
-)
-
-GEOFENCE_DELETE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_FENCE_ID): cv.positive_int,
-    }
-)
-
-GEOFENCE_EDIT_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_FENCE_ID): cv.positive_int,
-        vol.Required(ATTR_FENCE_UPDATES): dict,
-    }
-)
-
-GEOFENCE_LIST_SCHEMA = vol.Schema(
-    {
-        vol.Optional(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Optional(ATTR_REFRESH, default=False): cv.boolean,
-    }
-)
-
-LOCATION_HISTORY_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_START_TIME): cv.string,
-        vol.Required(ATTR_END_TIME): cv.string,
-        vol.Optional(ATTR_SELECT_COUNT, default=500): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=2147483647)
-        ),
-    }
-)
-
-SEND_TEXT_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_TEXT): cv.string,
-    }
-)
-
-SEND_EMOJI_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_EMOJI): cv.string,
-    }
-)
-
-MARK_MESSAGE_READ_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Optional(ATTR_FILE_ID): cv.positive_int,
-    }
-)
-
-DELETE_MESSAGE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_FILE_ID): cv.positive_int,
-    }
-)
-
-DELETE_ALL_MESSAGES_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-    }
-)
-
-SET_ALARMS_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_ALARMS_JSON): cv.string,
-    }
-)
-
-ADD_ALARM_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_ALARM_TIME): cv.string,
-        vol.Optional(ATTR_ALARM_DAYS): vol.Any(cv.string, [cv.string]),
-    }
-)
-
-DELETE_ALARM_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Optional(ATTR_ALARM_INDEX): vol.Coerce(int),
-        vol.Optional(ATTR_ALARM_TIME): cv.string,
-    }
-)
-
-SET_CLASS_MODE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_CLASS_WINDOWS_JSON): cv.string,
-    }
-)
-
-ADD_CLASS_WINDOW_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_CLASS_START): cv.string,
-        vol.Required(ATTR_CLASS_END): cv.string,
-        vol.Optional(ATTR_CLASS_DAYS): vol.Any(cv.string, [cv.string]),
-    }
-)
-
-CLEAR_CLASS_MODE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-    }
-)
-
-SET_CLASS_SCHEDULE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_SCHEDULE_JSON): cv.string,
-    }
-)
-
-SET_CLASS_SUBJECT_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_SCHEDULE_DAY): vol.Any(cv.positive_int, cv.string),
-        vol.Required(ATTR_SCHEDULE_PERIOD): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=20)
-        ),
-        vol.Required(ATTR_SCHEDULE_SUBJECT): cv.string,
-    }
-)
-
-CLEAR_CLASS_SCHEDULE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-    }
-)
-
-ADD_CLASS_PERIOD_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_CLASS_START): cv.string,
-        vol.Required(ATTR_CLASS_END): cv.string,
-        vol.Optional(ATTR_PERIOD_POSITION): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=20)
-        ),
-    }
-)
-
-DELETE_CLASS_PERIOD_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_PERIOD_POSITION): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=20)
-        ),
-    }
-)
-
-CHECK_DEVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_IMEI): cv.string,
-    }
-)
-
-ADD_DEVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_IMEI): cv.string,
-        vol.Optional(ATTR_RELATION_NAME, default=""): cv.string,
-        vol.Optional(ATTR_RELATION_PHONE, default=""): cv.string,
-        vol.Optional(ATTR_DEVICE_INFO, default=""): cv.string,
-    }
-)
-
-REMOVE_DEVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-    }
-)
-
-ADD_CONTACT_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_CONTACT_NAME): cv.string,
-        vol.Required(ATTR_CONTACT_NUMBER): cv.string,
-        vol.Optional(ATTR_CONTACT_ICON): vol.Any(vol.Coerce(int), cv.string),
-        vol.Optional(ATTR_CONTACT_SOS, default=False): cv.boolean,
-        vol.Optional(ATTR_CONTACT_SHORT_NUMBER, default=""): cv.string,
-    }
-)
-
-REMOVE_CONTACT_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Optional(ATTR_CONTACT_NAME): cv.string,
-        vol.Optional(ATTR_CONTACT_NUMBER): cv.string,
-    }
-)
-
-SET_CONTACTS_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_DEVICE_ID): cv.positive_int,
-        vol.Required(ATTR_CONTACTS_JSON): cv.string,
-    }
-)
-
-PROFILE_FIELD_MAP = {
-    ATTR_NICKNAME: "Nickname",
-    ATTR_BIRTHDAY: "Birthday",
-    ATTR_GENDER: "Gender",
-    ATTR_GRADE: "Grade",
-    ATTR_CLASS: "Class",
-    ATTR_SCHOOL: "School",
-    ATTR_HEIGHT: "Height",
-    ATTR_WEIGHT: "Weight",
-    ATTR_BLOOD_TYPE: "BloodType",
-    ATTR_ALLERGIC: "Allergic",
-    ATTR_NOTES: "Notes",
-    ATTR_CONDITION: "Condition",
-    ATTR_DRUG: "Drug",
-    ATTR_ADDRESS: "Address",
-    ATTR_AREA: "Area",
-    ATTR_CELL_PHONE: "CellPhone",
-    ATTR_CELL_PHONE_2: "CellPhone2",
-}
-
-
-def _parse_location(entry: dict) -> dict:
-    return {
-        "location_id": entry.get("LocationId"),
-        "lat": entry.get("Lat"),
-        "lng": entry.get("Lng"),
-        "time": entry.get("Time"),
-        "speed": entry.get("Speed"),
-        "course": entry.get("Course"),
-        "battery": entry.get("Battery"),
-        "data_type": entry.get("DataType"),
-        "icon": entry.get("Icon"),
-        "is_stop": entry.get("IsStop"),
-        "stop_time": entry.get("StopTime"),
-        "stop_time_str": entry.get("StopTimeStr"),
-    }
-
-
-def _parse_fence(fence: dict) -> dict:
-    def _f(v):
-        try:
-            return float(v) if v is not None else None
-        except (TypeError, ValueError):
-            return None
-
-    return {
-        "fence_id": fence.get("FenceId"),
-        "name": fence.get("FenceName"),
-        "latitude": _f(fence.get("Latitude")),
-        "longitude": _f(fence.get("Longitude")),
-        "radius": fence.get("Radius"),
-        "address": fence.get("Address"),
-        "fence_type": fence.get("FenceType"),
-        "alarm_type": fence.get("AlarmType"),
-        "in_use": fence.get("InUse"),
-        "is_device_fence": fence.get("IsDeviceFence"),
-        "device_id": fence.get("DeviceId"),
-        "start_time": fence.get("StartTime"),
-        "end_time": fence.get("EndTime"),
-    }
-
-
-def _current_alarms(coordinator: SafeFamilyCoordinator, device_id: int) -> list[dict]:
-    item = (coordinator.commands.get(device_id) or {}).get(ALARM_CODE, {})
-    return parse_alarms_json(str(item.get("CmdValue") or ""))
-
-
-def _current_class_windows(
-    coordinator: SafeFamilyCoordinator, device_id: int
-) -> list[dict]:
-    item = (coordinator.commands.get(device_id) or {}).get(CLASS_MODE_CODE, {})
-    return parse_class_mode_json(str(item.get("CmdValue") or ""))
-
-
-def _current_schedule_raw(coordinator: SafeFamilyCoordinator, device_id: int) -> str:
-    item = (coordinator.commands.get(device_id) or {}).get(CLASS_SCHEDULE_CODE, {})
-    return str(item.get("CmdValue") or "")
-
-
-def _parse_days_param(days) -> list[str]:
-    if days is None or days == "":
-        return list(DAY_NAMES)
-    if isinstance(days, list):
-        flat: list[str] = []
-        for d in days:
-            flat.extend([x.strip() for x in str(d).split(",") if x.strip()])
-        normalized = [x[:3].capitalize() for x in flat if x[:3].capitalize() in DAY_NAMES]
-        return normalized or list(DAY_NAMES)
-    s = str(days).strip()
-    if s.isdigit():
-        return weeks_to_days(s)
-    parts = [x.strip() for x in s.split(",") if x.strip()]
-    normalized = [x[:3].capitalize() for x in parts if x[:3].capitalize() in DAY_NAMES]
-    return normalized or list(DAY_NAMES)
-
-
-def _normalize_hhmm(value: str) -> str:
-    s = str(value).strip()
-    if ":" in s:
-        h, m = s.split(":", 1)
-        return f"{int(h):02d}:{int(m):02d}"
-    raise vol.Invalid(f"Time must be HH:MM, got {value!r}")
-
-
 async def _async_register_static_paths(hass: HomeAssistant) -> None:
-    """Serve emoji, contact-icon, and Lovelace asset files from inside
-    the integration folder.
+    """Serve the bundled Lovelace card from inside the integration folder.
 
-    Uses the modern StaticPathConfig API when available and falls back to
-    the legacy register_static_path call on older HA versions. Never raises
-    — a failure here should not prevent the integration from setting up.
+    Never raises: a missing directory or an old core must not prevent the
+    integration from setting up.
     """
     global _STATIC_PATHS_REGISTERED
     if _STATIC_PATHS_REGISTERED:
         return
 
-    sources = [
-        (EMOJI_URL_PATH, EMOJI_DIR),
-        (CONTACT_ICON_URL_PATH, CONTACT_ICON_DIR),
-        (WWW_URL_PATH, WWW_DIR),
-    ]
-    configs: list[tuple[str, str]] = []
-    for url_path, rel_dir in sources:
-        full = Path(hass.config.path(rel_dir))
-        if not full.is_dir():
-            _LOGGER.warning("Asset directory missing: %s", full)
-            continue
-        configs.append((url_path, str(full)))
-
-    if not configs:
+    full = Path(hass.config.path(WWW_DIR))
+    if not full.is_dir():
+        _LOGGER.warning("Asset directory missing: %s", full)
         return
 
     try:
@@ -678,15 +171,18 @@ async def _async_register_static_paths(hass: HomeAssistant) -> None:
             from homeassistant.components.http import StaticPathConfig  # noqa: WPS433
             await hass.http.async_register_static_paths(
                 [
-                    StaticPathConfig(url_path=u, path=p, cache_headers=False)
-                    for u, p in configs
+                    StaticPathConfig(
+                        url_path=WWW_URL_PATH, path=str(full),
+                        cache_headers=False,
+                    )
                 ]
             )
         except ImportError:
-            for u, p in configs:
-                hass.http.register_static_path(u, p, cache_headers=False)
+            hass.http.register_static_path(
+                WWW_URL_PATH, str(full), cache_headers=False
+            )
         _STATIC_PATHS_REGISTERED = True
-        _LOGGER.debug("Registered static paths: %s", [u for u, _ in configs])
+        _LOGGER.debug("Registered static path: %s", WWW_URL_PATH)
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Could not register static paths: %s", err)
 
@@ -695,14 +191,10 @@ async def _explain_refusal(pending) -> None:
     """Await a local-backend write, and say why it failed in the UI's words.
 
     `LocalApiError` is how the backend refuses -- a list that would drop a
-    protected number, a number that is not in the phonebook. Raised raw it
-    reaches the caller as a bare 500 with no reason in it, which is useless
-    when the whole point of the refusal is to tell you what you got wrong.
-
-    A refusal becomes `ServiceValidationError`: the request was understood and
-    rejected, so the REST API answers 400 and the message is the backend's.
-    Anything else (unreachable, timeout, 5xx) stays `HomeAssistantError` -- a
-    400 would wrongly blame the caller for a backend that is down.
+    protected number, a number that is not in the phonebook. A refusal becomes
+    `ServiceValidationError`: the request was understood and rejected, so the
+    REST API answers 400 and the message is the backend's. Anything else
+    (unreachable, timeout, 5xx) stays `HomeAssistantError`.
     """
     try:
         await pending
@@ -712,23 +204,16 @@ async def _explain_refusal(pending) -> None:
 
 
 async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up against a private local backend instead of the vendor cloud.
-
-    The backend speaks the watch's own protocol and offers a small HTTP JSON
-    API, so there is no login, no token and no vendor data: positions, battery
-    and heartbeats only.
-    """
+    """Set up against the private local backend."""
     coordinator = LocalCoordinator(hass, entry)
     # Raises ConfigEntryNotReady while nothing has reported yet, which makes
     # Home Assistant retry until the watch shows up.
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-    await hass.config_entries.async_forward_entry_setups(entry, LOCAL_PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
-    # The phonebook services are the only writes local mode offers beyond the
-    # buttons. Everything else the integration can do needs vendor data.
     if not hass.services.has_service(DOMAIN, SERVICE_SET_LOCAL_CONTACTS):
 
         async def _handle_set_local_contacts(call: ServiceCall) -> None:
@@ -783,7 +268,7 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _handle_send_local_voice(call: ServiceCall) -> None:
             await _explain_refusal(coordinator.async_send_voice(
-                call.data[ATTR_IMEI],
+                _imei_from_call(call, hass, coordinator),
                 call.data[ATTR_VOICE_URL],
                 notify=call.data.get(ATTR_VOICE_NOTIFY, False),
             ))
@@ -825,498 +310,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Static path setup skipped: %s", err)
 
-    if entry.data.get(CONF_LOCAL_URL):
-        return await _async_setup_local(hass, entry)
-
-    coordinator = SafeFamilyCoordinator(hass, entry)
-    await coordinator.async_restore_token()
-    await coordinator.async_config_entry_first_refresh()
-
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-
-    async def _handle_send_command(call: ServiceCall) -> None:
-        await coordinator.async_send_command(
-            call.data[ATTR_DEVICE_ID],
-            call.data[ATTR_CMD_CODE],
-            call.data.get(ATTR_PARAMS, ""),
+    if not (
+        entry.data.get(CONF_LOCAL_URL)
+        or entry.options.get(CONF_LOCAL_URL)
+    ):
+        raise ConfigEntryError(
+            "This SafeFamily Lite entry uses the removed Elari vendor cloud. "
+            "Remove it and add the integration again with your local backend "
+            "URL."
         )
 
-    async def _handle_save_profile(call: ServiceCall) -> None:
-        device_id = call.data[ATTR_DEVICE_ID]
-        updates = {
-            PROFILE_FIELD_MAP[key]: value
-            for key, value in call.data.items()
-            if key != ATTR_DEVICE_ID and key in PROFILE_FIELD_MAP
-        }
-        await coordinator.async_save_profile(device_id, updates)
-
-    async def _handle_geofence_create(call: ServiceCall) -> None:
-        await coordinator.async_geofence_create(
-            call.data[ATTR_DEVICE_ID],
-            call.data[ATTR_FENCE_NAME],
-            call.data[ATTR_LATITUDE],
-            call.data[ATTR_LONGITUDE],
-            call.data[ATTR_RADIUS],
-            call.data.get(ATTR_ADDRESS, ""),
-        )
-
-    async def _handle_geofence_delete(call: ServiceCall) -> None:
-        await coordinator.async_geofence_delete(
-            call.data[ATTR_DEVICE_ID], call.data[ATTR_FENCE_ID],
-        )
-
-    async def _handle_geofence_edit(call: ServiceCall) -> None:
-        await coordinator.async_geofence_edit(
-            call.data[ATTR_DEVICE_ID],
-            call.data[ATTR_FENCE_ID],
-            call.data[ATTR_FENCE_UPDATES],
-        )
-
-    async def _handle_geofence_list(call: ServiceCall):
-        if call.data.get(ATTR_REFRESH):
-            await coordinator.async_request_refresh()
-        fences_by_device = coordinator.geofences or {}
-        requested_device = call.data.get(ATTR_DEVICE_ID)
-
-        if requested_device is not None:
-            raw = fences_by_device.get(requested_device, []) or []
-            parsed = [_parse_fence(f) for f in raw]
-            return {
-                "device_id": requested_device,
-                "count": len(parsed),
-                "fences": parsed,
-            }
-
-        all_fences: list[dict] = []
-        for did, fences in fences_by_device.items():
-            for f in fences or []:
-                parsed = _parse_fence(f)
-                if parsed.get("device_id") is None:
-                    parsed["device_id"] = did
-                all_fences.append(parsed)
-
-        return {"count": len(all_fences), "fences": all_fences}
-
-    async def _handle_location_history(call: ServiceCall):
-        raw = await coordinator.async_get_location_history(
-            call.data[ATTR_DEVICE_ID],
-            call.data[ATTR_START_TIME],
-            call.data[ATTR_END_TIME],
-            call.data.get(ATTR_SELECT_COUNT, 500),
-        )
-        parsed = [_parse_location(item) for item in raw]
-        parsed.sort(key=lambda p: p.get("time") or "", reverse=True)
-        return {"count": len(parsed), "items": parsed}
-
-    async def _handle_send_text(call: ServiceCall) -> None:
-        await coordinator.async_send_text(
-            call.data[ATTR_DEVICE_ID], call.data[ATTR_TEXT]
-        )
-
-    async def _handle_send_emoji(call: ServiceCall) -> None:
-        await coordinator.async_send_emoji(
-            call.data[ATTR_DEVICE_ID], call.data[ATTR_EMOJI]
-        )
-
-    async def _handle_mark_message_read(call: ServiceCall):
-        marked = await coordinator.async_mark_message_read(
-            call.data[ATTR_DEVICE_ID], call.data.get(ATTR_FILE_ID)
-        )
-        return {"marked": marked}
-
-    async def _handle_delete_message(call: ServiceCall) -> None:
-        await coordinator.async_delete_message(
-            call.data[ATTR_DEVICE_ID], call.data[ATTR_FILE_ID]
-        )
-
-    async def _handle_delete_all_messages(call: ServiceCall):
-        deleted = await coordinator.async_delete_messages(
-            call.data[ATTR_DEVICE_ID]
-        )
-        return {"deleted": deleted}
-
-    async def _handle_set_alarms(call: ServiceCall) -> None:
-        await coordinator.async_send_command(
-            call.data[ATTR_DEVICE_ID], ALARM_CODE, call.data[ATTR_ALARMS_JSON]
-        )
-        await coordinator.async_request_refresh()
-
-    async def _handle_add_alarm(call: ServiceCall) -> None:
-        device_id = call.data[ATTR_DEVICE_ID]
-        time_str = _normalize_hhmm(call.data[ATTR_ALARM_TIME])
-        days = _parse_days_param(call.data.get(ATTR_ALARM_DAYS))
-        alarms = _current_alarms(coordinator, device_id)
-        alarms.append(default_alarm(time_str, days, enabled=True))
-        params = json.dumps(alarms, separators=(",", ":"))
-        await coordinator.async_send_command(device_id, ALARM_CODE, params)
-        await coordinator.async_request_refresh()
-
-    async def _handle_delete_alarm(call: ServiceCall) -> None:
-        device_id = call.data[ATTR_DEVICE_ID]
-        alarms = _current_alarms(coordinator, device_id)
-
-        idx = call.data.get(ATTR_ALARM_INDEX)
-        time_filter = call.data.get(ATTR_ALARM_TIME)
-
-        if idx is not None:
-            if idx < 0 or idx >= len(alarms):
-                raise vol.Invalid(f"Alarm index {idx} out of range (0-{len(alarms)-1})")
-            remaining = [a for i, a in enumerate(alarms) if i != idx]
-        elif time_filter:
-            tf = _normalize_hhmm(time_filter)
-            remaining = [a for a in alarms if str(a.get("Time") or "") != tf]
-            if len(remaining) == len(alarms):
-                raise vol.Invalid(f"No alarm found with time {time_filter!r}")
-        else:
-            raise vol.Invalid("Provide either 'index' or 'time' to delete an alarm")
-
-        params = json.dumps(remaining, separators=(",", ":")) if remaining else "[]"
-        await coordinator.async_send_command(device_id, ALARM_CODE, params)
-        await coordinator.async_request_refresh()
-
-    async def _handle_set_class_mode(call: ServiceCall) -> None:
-        await coordinator.async_send_command(
-            call.data[ATTR_DEVICE_ID],
-            CLASS_MODE_CODE,
-            call.data[ATTR_CLASS_WINDOWS_JSON],
-        )
-        await coordinator.async_request_refresh()
-
-    async def _handle_add_class_window(call: ServiceCall) -> None:
-        device_id = call.data[ATTR_DEVICE_ID]
-        start = _normalize_hhmm(call.data[ATTR_CLASS_START])
-        end = _normalize_hhmm(call.data[ATTR_CLASS_END])
-        days = _parse_days_param(call.data.get(ATTR_CLASS_DAYS))
-
-        windows = _current_class_windows(coordinator, device_id)
-        windows.append(make_class_window(start, end, days, enabled=True))
-        params = json.dumps(windows, separators=(",", ":"))
-        await coordinator.async_send_command(device_id, CLASS_MODE_CODE, params)
-        await coordinator.async_request_refresh()
-
-    async def _handle_clear_class_mode(call: ServiceCall) -> None:
-        await coordinator.async_send_command(
-            call.data[ATTR_DEVICE_ID], CLASS_MODE_CODE, "[]"
-        )
-        await coordinator.async_request_refresh()
-
-    async def _handle_set_class_schedule(call: ServiceCall) -> None:
-        await coordinator.async_send_command(
-            call.data[ATTR_DEVICE_ID],
-            CLASS_SCHEDULE_CODE,
-            call.data[ATTR_SCHEDULE_JSON],
-        )
-        await coordinator.async_request_refresh()
-
-    async def _handle_set_class_subject(call: ServiceCall) -> None:
-        device_id = call.data[ATTR_DEVICE_ID]
-        day_index = normalize_day_param(call.data[ATTR_SCHEDULE_DAY])
-        period = int(call.data[ATTR_SCHEDULE_PERIOD])
-        subject = str(call.data[ATTR_SCHEDULE_SUBJECT]).strip()
-
-        raw = _current_schedule_raw(coordinator, device_id)
-        windows = parse_schedule_json(raw)
-        if not windows:
-            raise vol.Invalid(
-                "No schedule exists yet — use set_class_schedule or add_class_period first"
-            )
-
-        week0 = next((w for w in windows if w.get("Week") == 0), None)
-        if week0 is None:
-            raise vol.Invalid("Schedule has no Week 0 (period definitions)")
-
-        periods = parse_periods(week0.get("Subject", ""))
-        if period < 1 or period > len(periods):
-            raise vol.Invalid(f"Period {period} out of range 1-{len(periods)}")
-
-        day_entry = next((w for w in windows if w.get("Week") == day_index), None)
-        if day_entry is None:
-            day_entry = {"Week": day_index, "Subject": ""}
-            windows.append(day_entry)
-
-        sched = parse_schedule(raw)
-        day_name = SCHEDULE_DAY_NAMES.get(day_index, "Mon")
-        subjects = list(sched["days"].get(day_name, [None] * len(periods)))
-        while len(subjects) < len(periods):
-            subjects.append(None)
-        subjects[period - 1] = subject or None
-        day_entry["Subject"] = encode_day_subjects(subjects[: len(periods)])
-
-        params = json.dumps(windows, separators=(",", ":"))
-        await coordinator.async_send_command(device_id, CLASS_SCHEDULE_CODE, params)
-        await coordinator.async_request_refresh()
-
-    async def _handle_clear_class_schedule(call: ServiceCall) -> None:
-        await coordinator.async_send_command(
-            call.data[ATTR_DEVICE_ID], CLASS_SCHEDULE_CODE, "[]"
-        )
-        await coordinator.async_request_refresh()
-
-    async def _handle_add_class_period(call: ServiceCall) -> None:
-        device_id = call.data[ATTR_DEVICE_ID]
-        start = _normalize_hhmm(call.data[ATTR_CLASS_START])
-        end = _normalize_hhmm(call.data[ATTR_CLASS_END])
-        position = call.data.get(ATTR_PERIOD_POSITION)
-
-        raw = _current_schedule_raw(coordinator, device_id)
-        try:
-            windows = add_period(raw, start, end, position)
-        except ValueError as err:
-            raise vol.Invalid(str(err)) from err
-
-        params = json.dumps(windows, separators=(",", ":"))
-        await coordinator.async_send_command(device_id, CLASS_SCHEDULE_CODE, params)
-        await coordinator.async_request_refresh()
-
-    async def _handle_delete_class_period(call: ServiceCall) -> None:
-        device_id = call.data[ATTR_DEVICE_ID]
-        position = int(call.data[ATTR_PERIOD_POSITION])
-
-        raw = _current_schedule_raw(coordinator, device_id)
-        try:
-            windows = delete_period(raw, position)
-        except ValueError as err:
-            raise vol.Invalid(str(err)) from err
-
-        params = json.dumps(windows, separators=(",", ":"))
-        await coordinator.async_send_command(device_id, CLASS_SCHEDULE_CODE, params)
-        await coordinator.async_request_refresh()
-
-    async def _handle_check_device(call: ServiceCall):
-        return await coordinator.async_check_device(call.data[ATTR_IMEI])
-
-    async def _handle_add_device(call: ServiceCall):
-        return await coordinator.async_add_device(
-            call.data[ATTR_IMEI],
-            call.data.get(ATTR_RELATION_NAME, ""),
-            call.data.get(ATTR_RELATION_PHONE, ""),
-            call.data.get(ATTR_DEVICE_INFO, ""),
-        )
-
-    async def _handle_remove_device(call: ServiceCall):
-        return await coordinator.async_remove_device(call.data[ATTR_DEVICE_ID])
-
-    async def _handle_add_contact(call: ServiceCall) -> None:
-        await coordinator.async_add_contact(
-            call.data[ATTR_DEVICE_ID],
-            call.data[ATTR_CONTACT_NAME],
-            call.data[ATTR_CONTACT_NUMBER],
-            call.data.get(ATTR_CONTACT_ICON, 6),
-            call.data.get(ATTR_CONTACT_SOS, False),
-            call.data.get(ATTR_CONTACT_SHORT_NUMBER, ""),
-        )
-
-    async def _handle_remove_contact(call: ServiceCall) -> None:
-        await coordinator.async_remove_contact(
-            call.data[ATTR_DEVICE_ID],
-            call.data.get(ATTR_CONTACT_NAME),
-            call.data.get(ATTR_CONTACT_NUMBER),
-        )
-
-    async def _handle_set_contacts(call: ServiceCall) -> None:
-        await coordinator.async_set_contacts(
-            call.data[ATTR_DEVICE_ID], call.data[ATTR_CONTACTS_JSON]
-        )
-
-    if not hass.services.has_service(DOMAIN, SERVICE_SEND_COMMAND):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SEND_COMMAND, _handle_send_command,
-            schema=SEND_COMMAND_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_SAVE_PROFILE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SAVE_PROFILE, _handle_save_profile,
-            schema=SAVE_PROFILE_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_GEOFENCE_CREATE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_GEOFENCE_CREATE, _handle_geofence_create,
-            schema=GEOFENCE_CREATE_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_GEOFENCE_DELETE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_GEOFENCE_DELETE, _handle_geofence_delete,
-            schema=GEOFENCE_DELETE_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_GEOFENCE_EDIT):
-        hass.services.async_register(
-            DOMAIN, SERVICE_GEOFENCE_EDIT, _handle_geofence_edit,
-            schema=GEOFENCE_EDIT_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_GEOFENCE_LIST):
-        hass.services.async_register(
-            DOMAIN, SERVICE_GEOFENCE_LIST, _handle_geofence_list,
-            schema=GEOFENCE_LIST_SCHEMA, supports_response=True,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_LOCATION_HISTORY):
-        hass.services.async_register(
-            DOMAIN, SERVICE_LOCATION_HISTORY, _handle_location_history,
-            schema=LOCATION_HISTORY_SCHEMA, supports_response=True,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_SEND_TEXT):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SEND_TEXT, _handle_send_text,
-            schema=SEND_TEXT_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_SEND_EMOJI):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SEND_EMOJI, _handle_send_emoji,
-            schema=SEND_EMOJI_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_MARK_MESSAGE_READ):
-        hass.services.async_register(
-            DOMAIN, SERVICE_MARK_MESSAGE_READ, _handle_mark_message_read,
-            schema=MARK_MESSAGE_READ_SCHEMA, supports_response=True,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_DELETE_MESSAGE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_DELETE_MESSAGE, _handle_delete_message,
-            schema=DELETE_MESSAGE_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_DELETE_ALL_MESSAGES):
-        hass.services.async_register(
-            DOMAIN, SERVICE_DELETE_ALL_MESSAGES, _handle_delete_all_messages,
-            schema=DELETE_ALL_MESSAGES_SCHEMA, supports_response=True,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_SET_ALARMS):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SET_ALARMS, _handle_set_alarms,
-            schema=SET_ALARMS_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_ADD_ALARM):
-        hass.services.async_register(
-            DOMAIN, SERVICE_ADD_ALARM, _handle_add_alarm,
-            schema=ADD_ALARM_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_DELETE_ALARM):
-        hass.services.async_register(
-            DOMAIN, SERVICE_DELETE_ALARM, _handle_delete_alarm,
-            schema=DELETE_ALARM_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_SET_CLASS_MODE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SET_CLASS_MODE, _handle_set_class_mode,
-            schema=SET_CLASS_MODE_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_ADD_CLASS_WINDOW):
-        hass.services.async_register(
-            DOMAIN, SERVICE_ADD_CLASS_WINDOW, _handle_add_class_window,
-            schema=ADD_CLASS_WINDOW_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_CLEAR_CLASS_MODE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_CLEAR_CLASS_MODE, _handle_clear_class_mode,
-            schema=CLEAR_CLASS_MODE_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_SET_CLASS_SCHEDULE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SET_CLASS_SCHEDULE, _handle_set_class_schedule,
-            schema=SET_CLASS_SCHEDULE_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_SET_CLASS_SUBJECT):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SET_CLASS_SUBJECT, _handle_set_class_subject,
-            schema=SET_CLASS_SUBJECT_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_CLEAR_CLASS_SCHEDULE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_CLEAR_CLASS_SCHEDULE, _handle_clear_class_schedule,
-            schema=CLEAR_CLASS_SCHEDULE_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_ADD_CLASS_PERIOD):
-        hass.services.async_register(
-            DOMAIN, SERVICE_ADD_CLASS_PERIOD, _handle_add_class_period,
-            schema=ADD_CLASS_PERIOD_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_DELETE_CLASS_PERIOD):
-        hass.services.async_register(
-            DOMAIN, SERVICE_DELETE_CLASS_PERIOD, _handle_delete_class_period,
-            schema=DELETE_CLASS_PERIOD_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_CHECK_DEVICE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_CHECK_DEVICE, _handle_check_device,
-            schema=CHECK_DEVICE_SCHEMA, supports_response=True,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_ADD_DEVICE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_ADD_DEVICE, _handle_add_device,
-            schema=ADD_DEVICE_SCHEMA, supports_response=True,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_REMOVE_DEVICE):
-        hass.services.async_register(
-            DOMAIN, SERVICE_REMOVE_DEVICE, _handle_remove_device,
-            schema=REMOVE_DEVICE_SCHEMA, supports_response=True,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_ADD_CONTACT):
-        hass.services.async_register(
-            DOMAIN, SERVICE_ADD_CONTACT, _handle_add_contact,
-            schema=ADD_CONTACT_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_REMOVE_CONTACT):
-        hass.services.async_register(
-            DOMAIN, SERVICE_REMOVE_CONTACT, _handle_remove_contact,
-            schema=REMOVE_CONTACT_SCHEMA,
-        )
-    if not hass.services.has_service(DOMAIN, SERVICE_SET_CONTACTS):
-        hass.services.async_register(
-            DOMAIN, SERVICE_SET_CONTACTS, _handle_set_contacts,
-            schema=SET_CONTACTS_SCHEMA,
-        )
-
-    return True
+    return await _async_setup_local(hass, entry)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    platforms = LOCAL_PLATFORMS if entry.data.get(CONF_LOCAL_URL) else PLATFORMS
-    unloaded = await hass.config_entries.async_unload_platforms(entry, platforms)
+    unloaded = await hass.config_entries.async_unload_platforms(
+        entry, PLATFORMS
+    )
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not hass.data.get(DOMAIN):
             for svc in (
-                SERVICE_SEND_COMMAND,
-                SERVICE_SAVE_PROFILE,
-                SERVICE_GEOFENCE_CREATE,
-                SERVICE_GEOFENCE_DELETE,
-                SERVICE_GEOFENCE_EDIT,
-                SERVICE_GEOFENCE_LIST,
-                SERVICE_LOCATION_HISTORY,
-                SERVICE_SEND_TEXT,
-                SERVICE_SEND_EMOJI,
-                SERVICE_SET_ALARMS,
-                SERVICE_ADD_ALARM,
-                SERVICE_DELETE_ALARM,
-                SERVICE_SET_CLASS_MODE,
-                SERVICE_ADD_CLASS_WINDOW,
-                SERVICE_CLEAR_CLASS_MODE,
-                SERVICE_SET_CLASS_SCHEDULE,
-                SERVICE_SET_CLASS_SUBJECT,
-                SERVICE_CLEAR_CLASS_SCHEDULE,
-                SERVICE_ADD_CLASS_PERIOD,
-                SERVICE_DELETE_CLASS_PERIOD,
-                SERVICE_CHECK_DEVICE,
-                SERVICE_ADD_DEVICE,
-                SERVICE_REMOVE_DEVICE,
-                SERVICE_ADD_CONTACT,
-                SERVICE_REMOVE_CONTACT,
-                SERVICE_SET_CONTACTS,
-                # The local-backend phonebook services share this guard, so
-                # leaving them out means a reload finds them still registered
-                # and keeps the handlers that close over the *previous*
-                # coordinator: a changed option (or backend URL) would apply to
-                # the entities and not to the services.
                 SERVICE_SET_LOCAL_CONTACTS,
                 SERVICE_ADD_LOCAL_CONTACT,
                 SERVICE_REMOVE_LOCAL_CONTACT,
                 SERVICE_SEND_LOCAL_VOICE,
                 SERVICE_SEND_TTS_VOICE,
             ):
-                # Only the services this backend mode registered exist; the
-                # other set belongs to the vendor cloud and removing it blind
-                # logs a warning on every reload, which hides real ones.
                 if hass.services.has_service(DOMAIN, svc):
                     hass.services.async_remove(DOMAIN, svc)
     return unloaded

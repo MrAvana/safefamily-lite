@@ -1,12 +1,18 @@
 {
   "domain": "safefamily_lite",
   "name": "SafeFamily Lite",
-  "version": "1.15.4",
+  "version": "2.0.0",
   "config_flow": true,
-  "dependencies": ["tts"],
+  "dependencies": [
+    "tts"
+  ],
   "documentation": "https://github.com/MrAvana/safefamily-lite",
   "issue_tracker": "https://github.com/MrAvana/safefamily-lite/issues",
-  "codeowners": ["MrAvana"],
-  "requirements": ["phonenumberslite>=8.13,<9"],
-  "iot_class": "cloud_polling"
+  "codeowners": [
+    "MrAvana"
+  ],
+  "requirements": [
+    "phonenumberslite>=8.13,<9"
+  ],
+  "iot_class": "local_polling"
 }

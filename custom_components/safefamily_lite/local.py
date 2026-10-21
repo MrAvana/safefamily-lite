@@ -1,10 +1,9 @@
 """Local backend support for SafeFamily Lite.
 
-This integration was written against the Elari vendor cloud
-(`appapi.ru-watch.com`), which no longer answers. The watch itself is happy to
-talk to any server, so it can instead be pointed at a private backend that
-speaks the watch's own "IW" protocol over plain TCP. That backend is small: it
-stores positions, battery and heartbeats and offers an HTTP JSON API:
+The watch is happy to talk to any server, so it is pointed at a private
+backend that speaks the watch's own "IW" protocol over plain TCP. That
+backend is small: it stores positions, battery and heartbeats and offers an
+HTTP JSON API:
 
     GET  /health                     liveness + tunnel reachability
     GET  /state                      current device + position, keyed by IMEI
@@ -22,9 +21,9 @@ this integration needs them yet.)
 Only what that backend can serve is exposed here: the position (device_tracker),
 battery, last-contact, link, phonebook and voice sensors, the locate / refresh /
 restart / take-photo buttons, the newest photo, plus services to write the
-phonebook and send a voice message. Everything else in this integration (the
-vendor chat history, geofences, class mode) needs the vendor cloud and is
-untouched by this mode.
+phonebook and send a voice message. Chat history, geofences, class mode and
+the rest of the vendor feature set are not available yet; they need local
+implementations before they can be exposed again.
 
 The phonebook deserves its own note. It is the watch's call whitelist: with
 "Protect from Stranger Calls" on, a number not in it is rejected, so an empty
@@ -1166,9 +1165,9 @@ class LocalRefreshButton(_LocalEntity, ButtonEntity):
 class LocalRebootButton(_LocalEntity, ButtonEntity):
     """Reboot the watch over its own protocol session.
 
-    Reuses the vendor button's translation key on purpose: "Restart" is
-    already the established wording for this action, and it means local mode
-    needs no new strings.
+    Reuses the existing `restart` translation key on purpose: "Restart" is
+    already the established wording for this action, so the local-only
+    release needs no new strings.
     """
 
     _attr_translation_key = "restart"
