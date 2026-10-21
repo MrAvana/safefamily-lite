@@ -200,6 +200,10 @@ data:
   sos: true
 ```
 
+In the service UI, **add** and **remove** both use a watch device picker. The
+YAML examples use `imei`, which remains supported for scripts and existing
+automations.
+
 `sensor.<name>_contacts` shows the stored list, `pushed_at`, the numbers the
 backend refuses to drop (`guardian_numbers`) and whether they are present. It
 reports **what the backend last wrote**, not an observation of the watch: the

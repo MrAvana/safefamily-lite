@@ -219,7 +219,11 @@ SET_LOCAL_CONTACTS_SCHEMA = vol.Schema(
 
 ADD_LOCAL_CONTACT_SCHEMA = vol.Schema(
     {
-        vol.Required(ATTR_IMEI): cv.string,
+        # The GUI sends the device-registry id from its watch picker. Scripts
+        # may keep sending `imei`, so both forms stay accepted; the handler
+        # requires exactly one of them.
+        vol.Optional(ATTR_WATCH): cv.string,
+        vol.Optional(ATTR_IMEI): cv.string,
         vol.Required(ATTR_CONTACT_NAME): cv.string,
         vol.Required(ATTR_CONTACT_NUMBER): cv.string,
         # The avatar indices the cloud service uses: 0 Father, 1 Mother,
@@ -234,7 +238,8 @@ ADD_LOCAL_CONTACT_SCHEMA = vol.Schema(
 
 REMOVE_LOCAL_CONTACT_SCHEMA = vol.Schema(
     {
-        vol.Required(ATTR_IMEI): cv.string,
+        vol.Optional(ATTR_WATCH): cv.string,
+        vol.Optional(ATTR_IMEI): cv.string,
         # Number only: it is the key the watch compares against, and the name
         # is not unique. The two presentations of one subscriber are separate
         # entries, so this removes one at a time.
@@ -283,6 +288,19 @@ def _imei_for_watch(hass: HomeAssistant, device_id: str,
     raise ServiceValidationError(
         "the selected device is not a watch on this local backend"
     )
+
+
+def _imei_from_call(call: ServiceCall, hass: HomeAssistant,
+                    coordinator: LocalCoordinator) -> str:
+    """Return the IMEI from the watch picker, or the legacy `imei` field."""
+    watch = call.data.get(ATTR_WATCH)
+    imei = (
+        _imei_for_watch(hass, watch, coordinator)
+        if watch else call.data.get(ATTR_IMEI)
+    )
+    if not imei:
+        raise ServiceValidationError("select a watch or provide an imei")
+    return imei
 
 
 SAVE_PROFILE_SCHEMA = vol.Schema(
@@ -734,7 +752,7 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _handle_add_local_contact(call: ServiceCall) -> None:
             await _explain_refusal(coordinator.async_add_contact(
-                call.data[ATTR_IMEI],
+                _imei_from_call(call, hass, coordinator),
                 call.data[ATTR_CONTACT_NAME],
                 call.data[ATTR_CONTACT_NUMBER],
                 resolve_icon(call.data.get(ATTR_CONTACT_ICON), 6),
@@ -750,7 +768,7 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _handle_remove_local_contact(call: ServiceCall) -> None:
             await _explain_refusal(coordinator.async_remove_contact(
-                call.data[ATTR_IMEI],
+                _imei_from_call(call, hass, coordinator),
                 call.data[ATTR_CONTACT_NUMBER],
             ))
 
@@ -776,17 +794,8 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_TTS_VOICE):
 
         async def _handle_send_tts_voice(call: ServiceCall) -> None:
-            watch = call.data.get(ATTR_WATCH)
-            imei = (
-                _imei_for_watch(hass, watch, coordinator)
-                if watch else call.data.get(ATTR_IMEI)
-            )
-            if not imei:
-                raise ServiceValidationError(
-                    "select a watch or provide an imei"
-                )
             await _explain_refusal(coordinator.async_send_tts(
-                imei,
+                _imei_from_call(call, hass, coordinator),
                 call.data[ATTR_TTS_MESSAGE],
                 engine=call.data.get(ATTR_TTS_ENGINE),
                 language=call.data.get(ATTR_TTS_LANGUAGE),

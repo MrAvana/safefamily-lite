@@ -333,12 +333,15 @@ add_local_contact:
     will never ring. The list is replaced wholesale on the wire, so this reads
     the stored copy, replaces any entry for the same subscriber, and writes
     the result back. With sos on, this entry becomes the guardian: the previous
-    SOS flag is cleared, because the watch has one SOS button.
+    SOS flag is cleared, because the watch has one SOS button. The watch
+    picker lists local SafeFamily Lite devices; scripts can still pass `imei`.
   fields:
-    imei:
+    watch:
       required: true
-      example: "123456789012345"
-      selector: { text: {} }
+      selector:
+        device:
+          filter:
+            - integration: safefamily_lite
     name:      { required: true, example: "Dad", selector: { text: {} } }
     number:    { required: true, example: "+261340000000", selector: { text: {} } }
     icon:
@@ -363,12 +366,15 @@ remove_local_contact:
     would keep the number ringing while the list said it was gone. Matching
     ignores +, spaces and dashes, so the number need not be written exactly as
     stored, and a call that matches nothing fails rather than reporting
-    success. A number the backend protects cannot be removed.
+    success. A number the backend protects cannot be removed. The watch
+    picker lists local SafeFamily Lite devices; scripts can still pass `imei`.
   fields:
-    imei:
+    watch:
       required: true
-      example: "123456789012345"
-      selector: { text: {} }
+      selector:
+        device:
+          filter:
+            - integration: safefamily_lite
     number:    { required: true, example: "+261340000000", selector: { text: {} } }
 
 send_local_voice:
