@@ -310,12 +310,15 @@ set_local_contacts:
     be marked is_sos: that number is the guardian the backend refuses to lose,
     and every form of it is protected. This service replaces the list even
     when the backend has no record of one, so use it deliberately -- the
-    add/remove services refuse that case instead.
+    add/remove services refuse that case instead. The watch picker lists local
+    SafeFamily Lite devices; scripts can still pass `imei`.
   fields:
-    imei:
+    watch:
       required: true
-      example: "123456789012345"
-      selector: { text: {} }
+      selector:
+        device:
+          filter:
+            - integration: safefamily_lite
     contacts_json:
       required: true
       example: '[{"name":"Dad","number":"+261340000000","icon":0,"is_sos":true}]'

@@ -212,7 +212,8 @@ SEND_COMMAND_SCHEMA = vol.Schema(
 # cloud service accepts: a JSON array of {name, number, icon, is_sos}.
 SET_LOCAL_CONTACTS_SCHEMA = vol.Schema(
     {
-        vol.Required(ATTR_IMEI): cv.string,
+        vol.Optional(ATTR_WATCH): cv.string,
+        vol.Optional(ATTR_IMEI): cv.string,
         vol.Required(ATTR_CONTACTS_JSON): cv.string,
     }
 )
@@ -731,6 +732,7 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, SERVICE_SET_LOCAL_CONTACTS):
 
         async def _handle_set_local_contacts(call: ServiceCall) -> None:
+            imei = _imei_from_call(call, hass, coordinator)
             try:
                 contacts = json.loads(call.data[ATTR_CONTACTS_JSON])
             except ValueError as err:
@@ -739,7 +741,7 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ) from err
             await _explain_refusal(
                 coordinator.async_set_contacts(
-                    call.data[ATTR_IMEI], contacts, replace_unknown=True
+                    imei, contacts, replace_unknown=True
                 )
             )
 
