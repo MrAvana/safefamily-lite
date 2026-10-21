@@ -280,6 +280,11 @@ data:
   burst: true
 ```
 
+In the service UI the watch is a device picker, and `language` is a dropdown
+with common codes plus a custom value. The YAML example above still uses
+`imei`, which remains supported for scripts and existing automations; the UI
+picker resolves the same IMEI from the selected device.
+
 `engine` defaults to the local `tts.piper` entity. Pass another TTS entity only
 when you deliberately want that provider, since a cloud engine would receive
 the message text. `notify: true` sends the immediate audible alert; `burst:

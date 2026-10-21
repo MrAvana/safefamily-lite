@@ -13,7 +13,7 @@ try:  # `ServiceValidationError` arrived in 2023.7; keep older cores working.
     from homeassistant.exceptions import ServiceValidationError
 except ImportError:  # pragma: no cover - depends on the core version
     ServiceValidationError = HomeAssistantError  # type: ignore[misc,assignment]
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .alarms import (
     ALARM_CODE,
@@ -178,6 +178,9 @@ ATTR_SCHEDULE_SUBJECT = "subject"
 ATTR_PERIOD_POSITION = "position"
 
 ATTR_IMEI = "imei"
+# The GUI uses a device-registry id from the watch picker; `imei` remains
+# accepted for scripts and existing automations.
+ATTR_WATCH = "watch"
 ATTR_RELATION_NAME = "relation_name"
 ATTR_RELATION_PHONE = "relation_phone"
 ATTR_DEVICE_INFO = "info"
@@ -251,7 +254,11 @@ SEND_LOCAL_VOICE_SCHEMA = vol.Schema(
 
 SEND_TTS_VOICE_SCHEMA = vol.Schema(
     {
-        vol.Required(ATTR_IMEI): cv.string,
+        # The GUI sends the device-registry id from its watch picker. Scripts
+        # may keep sending `imei`, so both forms stay accepted; the handler
+        # requires exactly one of them.
+        vol.Optional(ATTR_WATCH): cv.string,
+        vol.Optional(ATTR_IMEI): cv.string,
         vol.Required(ATTR_TTS_MESSAGE): cv.string,
         # Empty means "use tts.piper", the local engine, unless the caller
         # explicitly names another engine.
@@ -262,6 +269,21 @@ SEND_TTS_VOICE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_VOICE_BURST, default=True): cv.boolean,
     }
 )
+
+
+def _imei_for_watch(hass: HomeAssistant, device_id: str,
+                    coordinator: LocalCoordinator) -> str:
+    """Resolve a device-registry id from the GUI picker to its watch IMEI."""
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None:
+        raise ServiceValidationError("the selected watch device was not found")
+    for domain, identifier in device.identifiers:
+        if domain == DOMAIN and identifier in (coordinator.data or {}):
+            return identifier
+    raise ServiceValidationError(
+        "the selected device is not a watch on this local backend"
+    )
+
 
 SAVE_PROFILE_SCHEMA = vol.Schema(
     {
@@ -754,8 +776,17 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_TTS_VOICE):
 
         async def _handle_send_tts_voice(call: ServiceCall) -> None:
+            watch = call.data.get(ATTR_WATCH)
+            imei = (
+                _imei_for_watch(hass, watch, coordinator)
+                if watch else call.data.get(ATTR_IMEI)
+            )
+            if not imei:
+                raise ServiceValidationError(
+                    "select a watch or provide an imei"
+                )
             await _explain_refusal(coordinator.async_send_tts(
-                call.data[ATTR_IMEI],
+                imei,
                 call.data[ATTR_TTS_MESSAGE],
                 engine=call.data.get(ATTR_TTS_ENGINE),
                 language=call.data.get(ATTR_TTS_LANGUAGE),

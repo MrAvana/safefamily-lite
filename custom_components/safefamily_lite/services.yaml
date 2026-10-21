@@ -402,12 +402,15 @@ send_tts_voice:
     the AMR-NB format the watch requires. By default the local `tts.piper`
     engine is used; pass `engine` to choose another TTS entity. `notify` sends
     the immediate audible alert, while `burst` pushes the audio to a connected
-    watch now instead of leaving it queued.
+    watch now instead of leaving it queued. The watch picker lists the local
+    SafeFamily Lite devices; scripts can still pass `imei` instead of `watch`.
   fields:
-    imei:
+    watch:
       required: true
-      example: "123456789012345"
-      selector: { text: {} }
+      selector:
+        device:
+          filter:
+            - integration: safefamily_lite
     message:
       required: true
       example: "Hello, time to come home."
@@ -419,7 +422,25 @@ send_tts_voice:
           domain: tts
     language:
       example: "en_US"
-      selector: { text: {} }
+      selector:
+        select:
+          mode: dropdown
+          custom_value: true
+          options:
+            - en_US
+            - en_GB
+            - fr_FR
+            - de_DE
+            - es_ES
+            - it_IT
+            - pt_BR
+            - pt_PT
+            - nl_NL
+            - pl_PL
+            - ru_RU
+            - zh_CN
+            - ja_JP
+            - ko_KR
     options:
       example: { voice: "en_US-lessac-medium" }
       selector: { object: {} }
