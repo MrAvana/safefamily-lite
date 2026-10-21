@@ -378,8 +378,8 @@ send_local_voice:
     Home Assistant itself, for example
     http://127.0.0.1:8123/local/hello.amr for a file in /config/www. The file
     is validated and stored by the backend, then handed to the watch as it
-    asks for it. Leave `notify` off during school hours: the immediate alert
-    may play aloud on the wrist, while a silent queue waits for the child to
+    asks for it. `notify` sends the immediate alert, which may play aloud on
+    the wrist; leave it off for a silent queue that waits for the child to
     open the message.
   fields:
     imei:

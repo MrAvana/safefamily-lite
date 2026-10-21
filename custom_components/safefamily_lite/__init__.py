@@ -237,8 +237,7 @@ SEND_LOCAL_VOICE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_IMEI): cv.string,
         # A URL the Home Assistant process can fetch. `notify` asks for the
-        # immediate IWBP27 alert; the default is a silent queue because the
-        # watch may play that alert aloud.
+        # immediate IWBP27 alert; the default is a silent queue.
         vol.Required(ATTR_VOICE_URL): cv.string,
         vol.Optional(ATTR_VOICE_NOTIFY, default=False): cv.boolean,
     }

@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 import aiohttp
 from homeassistant.components.binary_sensor import (
@@ -248,8 +249,8 @@ class LocalApi:
                          data: bytes, notify: bool = False) -> dict:
         """Queue an AMR file for the watch.
 
-        `notify` is deliberately false by default: an immediate `IWBP27` may
-        play a sound on the wrist, which is not acceptable during school.
+        `notify` is false by default because an immediate `IWBP27` can play a
+        sound on the wrist; set it when an audible alert is wanted.
         """
         url = f"{self.base_url}/voice/send"
         params = {"imei": imei}
@@ -279,6 +280,44 @@ class LocalApi:
         return await self._request(session, "POST", "/reboot", imei=imei)
 
 
+def _lan_audio_base(hass: HomeAssistant, backend_url: str) -> str:
+    """Return a LAN-facing backend URL for voice playback.
+
+    The backend normally sits beside Home Assistant, but `backend_url` may be a
+    Docker bridge address (for example ``172.17.0.1``) that only the HA
+    container can reach. The voice sensor's URL is opened by a browser or a
+    phone, so it needs the LAN host from HA's own configured internal URL and
+    the backend's port. When HA has no internal URL, the HTTP API's detected
+    source address is used instead. If neither is available, keep the
+    configured backend URL so the integration still works (and log why it may
+    not open remotely).
+    """
+    backend = urlsplit(backend_url)
+    ha_host: str | None = None
+    internal = (getattr(hass.config, "internal_url", None) or "").strip()
+    if internal:
+        ha_host = urlsplit(internal).hostname
+
+    if not ha_host:
+        api = getattr(hass.config, "api", None)
+        local_ip = getattr(api, "local_ip", None)
+        if local_ip and not local_ip.startswith("127."):
+            ha_host = local_ip
+
+    if ha_host:
+        host = f"[{ha_host}]" if ":" in ha_host else ha_host
+        port = backend.port
+        netloc = f"{host}:{port}" if port else host
+        return f"{backend.scheme or 'http'}://{netloc}"
+
+    _LOGGER.warning(
+        "Home Assistant has no usable LAN address; voice playback will use "
+        "%s, which may not be reachable from a phone or browser",
+        backend_url,
+    )
+    return backend_url.rstrip("/")
+
+
 class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
     """Polls the private backend and caches one dict per watch, keyed by IMEI."""
 
@@ -295,6 +334,7 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
             or ""
         )
         self.api = LocalApi(self.url)
+        self.audio_base_url = _lan_audio_base(hass, self.url)
         scan = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_LOCAL_SCAN_INTERVAL)
         super().__init__(
             hass,
@@ -453,8 +493,8 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         The service takes a URL rather than a Home Assistant media id because
         the backend is a separate process: `http://homeassistant.local:8123/
         local/...` is reachable from here, a path inside the HA container is
-        not necessarily reachable from the backend. `notify` remains false by
-        default so a queued message cannot make the wrist chirp in class.
+        not necessarily reachable from the backend. `notify` is false by
+        default; set it when the watch should also get the audible alert.
         """
         if len(url) > 2048:
             raise LocalApiError("voice URL is too long", refusal=True)
@@ -894,7 +934,7 @@ class LocalVoiceSensor(_LocalEntity, SensorEntity):
             # The backend endpoint, on the LAN only. The card plays this URL
             # on demand; the AMR bytes never enter the state machine.
             "audio_url": (
-                f"{self.coordinator.url}/voices/latest?imei={self._imei}"
+                f"{self.coordinator.audio_base_url}/voices/latest?imei={self._imei}"
                 if latest else None
             ),
             "imei": self._imei,
