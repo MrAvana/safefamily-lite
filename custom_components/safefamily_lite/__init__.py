@@ -310,10 +310,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Static path setup skipped: %s", err)
 
-    if not (
-        entry.data.get(CONF_LOCAL_URL)
-        or entry.options.get(CONF_LOCAL_URL)
-    ):
+    # Local entries always carry the URL in `data`; `options` may override it
+    # later. An entry without it is an old cloud entry, and must be removed
+    # rather than silently reused with the old credentials still stored.
+    if not entry.data.get(CONF_LOCAL_URL):
         raise ConfigEntryError(
             "This SafeFamily Lite entry uses the removed Elari vendor cloud. "
             "Remove it and add the integration again with your local backend "
