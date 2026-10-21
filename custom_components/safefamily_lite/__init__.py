@@ -115,9 +115,15 @@ SERVICE_SET_LOCAL_CONTACTS = "set_local_contacts"
 SERVICE_ADD_LOCAL_CONTACT = "add_local_contact"
 SERVICE_REMOVE_LOCAL_CONTACT = "remove_local_contact"
 SERVICE_SEND_LOCAL_VOICE = "send_local_voice"
+SERVICE_SEND_TTS_VOICE = "send_tts_voice"
 
 ATTR_VOICE_URL = "url"
 ATTR_VOICE_NOTIFY = "notify"
+ATTR_VOICE_BURST = "burst"
+ATTR_TTS_MESSAGE = "message"
+ATTR_TTS_ENGINE = "engine"
+ATTR_TTS_LANGUAGE = "language"
+ATTR_TTS_OPTIONS = "options"
 
 ATTR_DEVICE_ID = "device_id"
 ATTR_CMD_CODE = "cmd_code"
@@ -240,6 +246,20 @@ SEND_LOCAL_VOICE_SCHEMA = vol.Schema(
         # immediate IWBP27 alert; the default is a silent queue.
         vol.Required(ATTR_VOICE_URL): cv.string,
         vol.Optional(ATTR_VOICE_NOTIFY, default=False): cv.boolean,
+    }
+)
+
+SEND_TTS_VOICE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_IMEI): cv.string,
+        vol.Required(ATTR_TTS_MESSAGE): cv.string,
+        # Empty means "use tts.piper", the local engine, unless the caller
+        # explicitly names another engine.
+        vol.Optional(ATTR_TTS_ENGINE): cv.string,
+        vol.Optional(ATTR_TTS_LANGUAGE): cv.string,
+        vol.Optional(ATTR_TTS_OPTIONS, default={}): dict,
+        vol.Optional(ATTR_VOICE_NOTIFY, default=False): cv.boolean,
+        vol.Optional(ATTR_VOICE_BURST, default=True): cv.boolean,
     }
 )
 
@@ -729,6 +749,24 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN, SERVICE_SEND_LOCAL_VOICE, _handle_send_local_voice,
             schema=SEND_LOCAL_VOICE_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_TTS_VOICE):
+
+        async def _handle_send_tts_voice(call: ServiceCall) -> None:
+            await _explain_refusal(coordinator.async_send_tts(
+                call.data[ATTR_IMEI],
+                call.data[ATTR_TTS_MESSAGE],
+                engine=call.data.get(ATTR_TTS_ENGINE),
+                language=call.data.get(ATTR_TTS_LANGUAGE),
+                options=call.data.get(ATTR_TTS_OPTIONS) or {},
+                notify=call.data.get(ATTR_VOICE_NOTIFY, False),
+                burst=call.data.get(ATTR_VOICE_BURST, True),
+            ))
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_SEND_TTS_VOICE, _handle_send_tts_voice,
+            schema=SEND_TTS_VOICE_SCHEMA,
         )
 
     _LOGGER.info(
@@ -1232,6 +1270,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_LOCAL_CONTACT,
                 SERVICE_REMOVE_LOCAL_CONTACT,
                 SERVICE_SEND_LOCAL_VOICE,
+                SERVICE_SEND_TTS_VOICE,
             ):
                 # Only the services this backend mode registered exist; the
                 # other set belongs to the vendor cloud and removing it blind

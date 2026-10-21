@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 import aiohttp
+from homeassistant.components import tts as tts_component
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -58,6 +59,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import (
@@ -275,6 +277,44 @@ class LocalApi:
             raise
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             raise LocalApiError(f"/voice/send failed: {err}") from err
+
+    async def convert_voice(self, session: aiohttp.ClientSession,
+                            data: bytes) -> bytes:
+        """Convert TTS audio to AMR-NB using the backend's converter."""
+        url = f"{self.base_url}/voice/convert"
+        try:
+            async with session.post(
+                url,
+                data=data,
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=REQUEST_TIMEOUT,
+            ) as resp:
+                if resp.status >= 400:
+                    body = (await resp.text())[:200]
+                    raise LocalApiError(
+                        f"/voice/convert -> HTTP {resp.status}: {body}",
+                        400 <= resp.status < 500,
+                    )
+                amr = await resp.read()
+        except LocalApiError:
+            raise
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise LocalApiError(f"/voice/convert failed: {err}") from err
+        if not amr.startswith(b"#!AMR"):
+            raise LocalApiError("backend returned non-AMR audio")
+        if len(amr) > 128 * 1024:
+            raise LocalApiError("converted voice is larger than 128 KiB")
+        return amr
+
+    async def burst_voice(self, session: aiohttp.ClientSession, imei: str,
+                          voice_id: int | None = None,
+                          delay: float = 0.2) -> dict:
+        params = {"imei": imei, "delay": delay}
+        if voice_id is not None:
+            params["id"] = voice_id
+        return await self._request(
+            session, "POST", "/voice/burst", **params
+        )
 
     async def reboot(self, session: aiohttp.ClientSession, imei: str) -> dict:
         return await self._request(session, "POST", "/reboot", imei=imei)
@@ -519,6 +559,91 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         return await self.api.send_voice(
             self._session, imei, data, notify=notify
         )
+
+    async def async_send_tts(
+        self,
+        imei: str,
+        message: str,
+        engine: str | None = None,
+        language: str | None = None,
+        options: dict | None = None,
+        notify: bool = False,
+        burst: bool = True,
+    ) -> dict:
+        """Synthesize a message with Home Assistant's TTS and send it.
+
+        The TTS engine runs in Home Assistant; the result is handed to the
+        backend only for the AMR-NB conversion the watch requires. `notify`
+        controls the immediate audible alert, while `burst` pushes the file to
+        a connected watch now instead of waiting for it to ask for the next
+        message.
+        """
+        message = message.strip()
+        if not message:
+            raise LocalApiError("TTS message is empty", refusal=True)
+        if len(message) > 500:
+            raise LocalApiError(
+                "TTS message is longer than 500 characters", refusal=True
+            )
+
+        if engine:
+            resolved = tts_component.async_resolve_engine(self.hass, engine)
+            if resolved is None:
+                raise LocalApiError(
+                    f"unknown TTS engine: {engine}", refusal=True
+                )
+        else:
+            # Prefer the local Piper engine: sending a child's message to a
+            # cloud TTS provider should be an explicit choice, not a default.
+            if self.hass.states.get("tts.piper") is None:
+                raise LocalApiError(
+                    "tts.piper is not available; pass an engine", refusal=True
+                )
+            resolved = "tts.piper"
+
+        try:
+            media_id = tts_component.generate_media_source_id(
+                self.hass,
+                message,
+                engine=resolved,
+                language=language,
+                options=options or {},
+                cache=False,
+            )
+            _extension, data = await tts_component.async_get_media_source_audio(
+                self.hass, media_id
+            )
+        except (HomeAssistantError, ValueError) as err:
+            raise LocalApiError(f"TTS failed: {err}") from err
+        if not data:
+            raise LocalApiError("TTS returned no audio")
+        if len(data) > 4 * 1024 * 1024:
+            raise LocalApiError("TTS audio is larger than 4 MiB")
+
+        amr = await self.api.convert_voice(self._session, data)
+        result = await self.api.send_voice(
+            self._session, imei, amr, notify=notify
+        )
+        if burst:
+            if result.get("sent_now"):
+                try:
+                    result["burst"] = await self.api.burst_voice(
+                        self._session,
+                        imei,
+                        voice_id=(result.get("queued") or {}).get("id"),
+                    )
+                except LocalApiError as err:
+                    # The message is queued; a failed push is worth a log, not
+                    # a service failure that would make the caller resend it.
+                    _LOGGER.warning(
+                        "TTS voice queued for %s but burst failed: %s", imei, err
+                    )
+            else:
+                _LOGGER.info(
+                    "TTS voice queued for %s; watch is offline, burst deferred",
+                    imei,
+                )
+        return result
 
     async def async_set_contacts(
         self, imei: str, contacts: list[dict], replace_unknown: bool = False

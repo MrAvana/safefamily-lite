@@ -264,6 +264,32 @@ backend has no record of one, which is what makes it the deliberate way to
 rebuild a list after `state.db` is lost; an add or remove in that state is
 refused instead, since it would send a one-entry list over all 13 slots.
 
+### Voice messages and TTS
+
+The local backend can queue an existing AMR file or generate a spoken message
+with Home Assistant's TTS engine:
+
+```yaml
+action: safefamily_lite.send_tts_voice
+data:
+  imei: "{{ state_attr('sensor.mitia_voice_messages', 'imei') }}"
+  message: "Hello, time to come home."
+  engine: tts.piper
+  language: en_US
+  notify: false
+  burst: true
+```
+
+`engine` defaults to the local `tts.piper` entity. Pass another TTS entity only
+when you deliberately want that provider, since a cloud engine would receive
+the message text. `notify: true` sends the immediate audible alert; `burst:
+true` pushes the file to a connected watch now. With `notify: false` the burst
+is silent and the child can play it when they choose.
+
+The backend converts the TTS engine's MP3/WAV output to AMR-NB before queueing
+it; the watch does not accept the original format. `send_local_voice` remains
+available for a prepared AMR file.
+
 ### What is not available
 
 Chat, alarms, geofences, photos, class mode and the settings entities all live

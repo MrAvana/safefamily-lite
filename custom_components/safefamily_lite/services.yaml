@@ -393,3 +393,39 @@ send_local_voice:
     notify:
       default: false
       selector: { boolean: {} }
+
+send_tts_voice:
+  name: Send TTS voice message (local backend)
+  description: >
+    Generate a spoken message with a Home Assistant text-to-speech engine and
+    send it to the watch. The backend converts the engine's MP3/WAV output to
+    the AMR-NB format the watch requires. By default the local `tts.piper`
+    engine is used; pass `engine` to choose another TTS entity. `notify` sends
+    the immediate audible alert, while `burst` pushes the audio to a connected
+    watch now instead of leaving it queued.
+  fields:
+    imei:
+      required: true
+      example: "123456789012345"
+      selector: { text: {} }
+    message:
+      required: true
+      example: "Hello, time to come home."
+      selector: { text: { multiline: true } }
+    engine:
+      example: "tts.piper"
+      selector:
+        entity:
+          domain: tts
+    language:
+      example: "en_US"
+      selector: { text: {} }
+    options:
+      example: { voice: "en_US-lessac-medium" }
+      selector: { object: {} }
+    notify:
+      default: false
+      selector: { boolean: {} }
+    burst:
+      default: true
+      selector: { boolean: {} }
