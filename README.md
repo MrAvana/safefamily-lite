@@ -263,7 +263,8 @@ data:
 
 Choose `Teal`, `Orange`, `Green` or `Red`. The watch must be connected when
 the service is called; the sticker is never queued. It is not an SMS and does
-not appear in the Messaging app.
+not appear in the Messaging app. All four stickers were confirmed on a
+physical K01 on 2026-10-22.
 
 ## Services
 
