@@ -15,6 +15,7 @@ HTTP JSON API:
     GET  /voices/latest?imei=        the newest AMR the watch sent
     POST /voice/send?imei=           queue an AMR for the watch (raw body)
     POST /contacts?imei=             replace the watch's phonebook
+    POST /alarms?imei=               replace the watch's whole alarm list
 
 (The backend also serves /locations history, /interval and /cmd; nothing in
 this integration needs them yet.)
@@ -22,7 +23,8 @@ this integration needs them yet.)
 Only what that backend can serve is exposed here: the position (device_tracker),
 battery, last-contact, link, phonebook and voice sensors, the locate / refresh /
 restart / take-photo buttons, the newest photo, plus services to write the
-phonebook, send a voice message and show a short text notification. Chat
+phonebook, replace the alarm list, send a voice message and show a short text
+notification. Chat
 history, geofences, class mode and the rest of the vendor feature set are not
 available yet; they need local implementations before they can be exposed
 again.
@@ -105,6 +107,11 @@ REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
 # 128px screen, not a message thread; the backend is the authority and refuses
 # longer text, but checking here gives the service caller a clearer error.
 TEXT_MAX_CHARS = 64
+
+# The K01 firmware's alarm table has three 52-byte slots, even though the
+# vendor app allows five. The backend enforces this; the service mirrors it so
+# the UI error names the limit without making a network round trip.
+ALARMS_MAX = 3
 
 
 class LocalApiError(Exception):
@@ -212,6 +219,27 @@ class LocalApi:
             "/contacts",
             json_body={"contacts": contacts, "required": required},
             **params,
+        )
+
+    async def set_alarms(
+        self,
+        session: aiohttp.ClientSession,
+        imei: str,
+        alarms: list[dict],
+    ) -> dict:
+        """Replace the whole alarm list on the watch.
+
+        `IWBP85` has no read-back and replaces every slot, so the caller always
+        sends the complete list; an empty list clears all alarms. The backend
+        refuses when the watch is offline rather than queueing an alarm that
+        would ring at an unpredictable time.
+        """
+        return await self._request(
+            session,
+            "POST",
+            "/alarms",
+            json_body={"alarms": alarms},
+            imei=imei,
         )
 
     async def locate(self, session: aiohttp.ClientSession, imei: str) -> dict:
@@ -757,6 +785,21 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         )
         await self.async_request_refresh()
         return result
+
+    async def async_set_alarms(self, imei: str, alarms: list[dict]) -> dict:
+        """Replace the whole alarm list, or clear it with an empty list.
+
+        The wire command is a full replace with no read-back. Keep the list at
+        three entries or fewer: the firmware's table has three slots even
+        though the vendor app allows five.
+        """
+        if not isinstance(alarms, list):
+            raise LocalApiError("alarms must be a list", refusal=True)
+        if len(alarms) > ALARMS_MAX:
+            raise LocalApiError(
+                f"at most {ALARMS_MAX} alarms", refusal=True
+            )
+        return await self.api.set_alarms(self._session, imei, alarms)
 
     async def async_add_contact(
         self, imei: str, name: str, number: str, icon: int = 0, sos: bool = False

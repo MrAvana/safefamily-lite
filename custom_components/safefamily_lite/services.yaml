@@ -28,6 +28,29 @@ set_local_contacts:
       example: '[{"name":"Dad","number":"+261340000000","icon":0,"is_sos":true}]'
       selector: { text: { multiline: true } }
 
+set_local_alarms:
+  name: Set alarms (local backend)
+  description: >
+    Replace the watch's whole alarm list, as a JSON array of
+    {"time": "HH:MM", "days": ["Mon", ...], "enabled": true, "name": "..."}.
+    An alarm repeats every day when `days` is omitted. `name` is printable
+    ASCII, up to 20 characters. At most 3 alarms: the K01 firmware's table has
+    three slots even though the vendor app allows five. An empty array clears
+    every alarm. The watch must be connected now; the list is never queued.
+    The watch picker lists local SafeFamily Lite devices; scripts can still
+    pass `imei`.
+  fields:
+    watch:
+      required: true
+      selector:
+        device:
+          filter:
+            - integration: safefamily_lite
+    alarms_json:
+      required: true
+      example: '[{"time":"07:30","days":["Mon","Tue","Wed","Thu","Fri"],"enabled":true,"name":"School"}]'
+      selector: { text: { multiline: true } }
+
 add_local_contact:
   name: Add phonebook entry (local backend)
   description: >

@@ -19,6 +19,7 @@ local backend.
 - Voice messages and Home Assistant TTS playback on the watch.
 - Short text notifications on the watch screen.
 - Four built-in K01 stickers (teal, orange, green, red).
+- Alarm-list management for the K01's three hardware slots.
 - All data stays on your own hardware.
 
 ## Supported devices
@@ -266,6 +267,43 @@ the service is called; the sticker is never queued. It is not an SMS and does
 not appear in the Messaging app. All four stickers were confirmed on a
 physical K01 on 2026-10-22.
 
+## Alarms
+
+The watch's alarm list is written through `IWBP85`. The command replaces the
+whole list, and the watch cannot be read back, so the service always takes the
+complete list as JSON:
+
+```yaml
+action: safefamily_lite.set_local_alarms
+data:
+  watch: 0123456789abcdef0123456789abcdef
+  alarms_json: >-
+    [{"time":"07:30","days":["Mon","Tue","Wed","Thu","Fri"],
+      "enabled":true,"name":"School"}]
+```
+
+Each entry has:
+
+| Field | Meaning |
+|---|---|
+| `time` | `HH:MM` or `HHMM`, 24-hour local time |
+| `days` | Weekday names, Monday to Sunday; omitted means every day |
+| `enabled` | Per-alarm switch, default `true` |
+| `name` | Printable ASCII, up to 20 characters |
+
+At most **3** alarms: the K01 firmware's alarm table has three 52-byte slots,
+even though the vendor app offers five. Send an empty array to clear every
+alarm. The watch must be connected now; the list is never queued or re-pushed
+at login.
+
+> **Not yet verified on a physical watch.** The frame grammar and table size
+> come from the firmware, but the `IWAP85` acknowledgement, on-watch list
+> display, ringing and persistence across reboot have not been observed. Treat
+> this as an experimental feature until that test is recorded.
+
+In the service UI the watch is a device picker; `imei` remains supported for
+scripts.
+
 ## Services
 
 All services are under the `safefamily_lite.` domain.
@@ -279,9 +317,11 @@ All services are under the `safefamily_lite.` domain.
 | `send_tts_voice` | Generate and queue a TTS message |
 | `send_local_text` | Show a short notification on the watch now |
 | `send_local_emoji` | Show one of the four built-in K01 stickers now |
+| `set_local_alarms` | Replace the whole alarm list from JSON |
 
-Use **Developer Tools → Actions** to call them. The phonebook, voice, text and
-sticker services accept `watch` (device picker) or `imei` (script fallback).
+Use **Developer Tools → Actions** to call them. The phonebook, alarm, voice,
+text and sticker services accept `watch` (device picker) or `imei` (script
+fallback).
 
 ## Example automations
 

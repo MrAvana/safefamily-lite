@@ -17,7 +17,7 @@ from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .const import CONF_LOCAL_URL, DOMAIN
 from .contacts import resolve_icon
-from .local import LocalApiError, LocalCoordinator
+from .local import ALARMS_MAX, LocalApiError, LocalCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ PLATFORMS = [
 ]
 
 SERVICE_SET_LOCAL_CONTACTS = "set_local_contacts"
+SERVICE_SET_LOCAL_ALARMS = "set_local_alarms"
 SERVICE_ADD_LOCAL_CONTACT = "add_local_contact"
 SERVICE_REMOVE_LOCAL_CONTACT = "remove_local_contact"
 SERVICE_SEND_LOCAL_VOICE = "send_local_voice"
@@ -58,6 +59,7 @@ ATTR_CONTACT_NUMBER = "number"
 ATTR_CONTACT_ICON = "icon"
 ATTR_CONTACT_SOS = "sos"
 ATTR_CONTACTS_JSON = "contacts_json"
+ATTR_ALARMS_JSON = "alarms_json"
 
 WWW_URL_PATH = "/safefamily_lite/www"
 WWW_DIR = "custom_components/safefamily_lite/www"
@@ -69,6 +71,17 @@ SET_LOCAL_CONTACTS_SCHEMA = vol.Schema(
         vol.Optional(ATTR_WATCH): cv.string,
         vol.Optional(ATTR_IMEI): cv.string,
         vol.Required(ATTR_CONTACTS_JSON): cv.string,
+    }
+)
+
+# `IWBP85` is also a full replace with no read-back, so the same JSON-list
+# shape is used for alarms. The backend validates the individual alarms; the
+# service checks the list shape and the firmware's three-slot limit.
+SET_LOCAL_ALARMS_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_WATCH): cv.string,
+        vol.Optional(ATTR_IMEI): cv.string,
+        vol.Required(ATTR_ALARMS_JSON): cv.string,
     }
 )
 
@@ -268,6 +281,31 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=SET_LOCAL_CONTACTS_SCHEMA,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_LOCAL_ALARMS):
+
+        async def _handle_set_local_alarms(call: ServiceCall) -> None:
+            imei = _imei_from_call(call, hass, coordinator)
+            try:
+                alarms = json.loads(call.data[ATTR_ALARMS_JSON])
+            except ValueError as err:
+                raise ServiceValidationError(
+                    f"alarms_json is not valid JSON: {err}"
+                ) from err
+            if not isinstance(alarms, list):
+                raise ServiceValidationError("alarms_json must be a JSON array")
+            if len(alarms) > ALARMS_MAX:
+                raise ServiceValidationError(
+                    f"at most {ALARMS_MAX} alarms"
+                )
+            await _explain_refusal(
+                coordinator.async_set_alarms(imei, alarms)
+            )
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_SET_LOCAL_ALARMS, _handle_set_local_alarms,
+            schema=SET_LOCAL_ALARMS_SCHEMA,
+        )
+
     if not hass.services.has_service(DOMAIN, SERVICE_ADD_LOCAL_CONTACT):
 
         async def _handle_add_local_contact(call: ServiceCall) -> None:
@@ -391,6 +429,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not hass.data.get(DOMAIN):
             for svc in (
                 SERVICE_SET_LOCAL_CONTACTS,
+                SERVICE_SET_LOCAL_ALARMS,
                 SERVICE_ADD_LOCAL_CONTACT,
                 SERVICE_REMOVE_LOCAL_CONTACT,
                 SERVICE_SEND_LOCAL_VOICE,
