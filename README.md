@@ -296,10 +296,10 @@ even though the vendor app offers five. Send an empty array to clear every
 alarm. The watch must be connected now; the list is never queued or re-pushed
 at login.
 
-> **Not yet verified on a physical watch.** The frame grammar and table size
-> come from the firmware, but the `IWAP85` acknowledgement, on-watch list
-> display, ringing and persistence across reboot have not been observed. Treat
-> this as an experimental feature until that test is recorded.
+> **Partially verified on a physical watch.** A K01 acknowledged one alarm and
+> a clear with `IWAP75` on 2026-10-22, mirroring the list fields; the on-watch
+> list display, ringing and persistence across reboot have not been
+> independently confirmed. Treat those as unverified until tested.
 
 In the service UI the watch is a device picker; `imei` remains supported for
 scripts.
