@@ -114,6 +114,32 @@ send_local_voice:
       default: false
       selector: { boolean: {} }
 
+send_local_text:
+  name: Send text notification (local backend)
+  description: >
+    Show a short text notification on the watch and make it beep. This is the
+    watch's own on-screen overlay, not an SMS: it is transient and does not
+    appear in the Messaging app or create an inbox entry. The watch must be
+    connected now; the message is never queued, so a watch that is offline
+    fails instead of showing the text at some later login. Up to 64
+    characters. The watch picker lists local SafeFamily Lite devices; scripts
+    can still pass `imei` instead of `watch`.
+  fields:
+    watch:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: safefamily_lite
+    imei:
+      required: false
+      example: "123456789012345"
+      selector: { text: {} }
+    text:
+      required: true
+      example: "Time to come home"
+      selector: { text: { multiline: true } }
+
 send_tts_voice:
   name: Send TTS voice message (local backend)
   description: >

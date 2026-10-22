@@ -37,10 +37,12 @@ SERVICE_ADD_LOCAL_CONTACT = "add_local_contact"
 SERVICE_REMOVE_LOCAL_CONTACT = "remove_local_contact"
 SERVICE_SEND_LOCAL_VOICE = "send_local_voice"
 SERVICE_SEND_TTS_VOICE = "send_tts_voice"
+SERVICE_SEND_LOCAL_TEXT = "send_local_text"
 
 ATTR_VOICE_URL = "url"
 ATTR_VOICE_NOTIFY = "notify"
 ATTR_VOICE_BURST = "burst"
+ATTR_TEXT = "text"
 ATTR_TTS_MESSAGE = "message"
 ATTR_TTS_ENGINE = "engine"
 ATTR_TTS_LANGUAGE = "language"
@@ -105,6 +107,17 @@ SEND_LOCAL_VOICE_SCHEMA = vol.Schema(
         # immediate IWBP27 alert; the default is a silent queue.
         vol.Required(ATTR_VOICE_URL): cv.string,
         vol.Optional(ATTR_VOICE_NOTIFY, default=False): cv.boolean,
+    }
+)
+
+SEND_LOCAL_TEXT_SCHEMA = vol.Schema(
+    {
+        # The GUI sends the device-registry id from its watch picker. Scripts
+        # may keep sending `imei`, so both forms stay accepted.
+        vol.Optional(ATTR_WATCH): cv.string,
+        vol.Optional(ATTR_IMEI): cv.string,
+        # A transient notification on the watch screen, not an SMS.
+        vol.Required(ATTR_TEXT): cv.string,
     }
 )
 
@@ -278,6 +291,19 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=SEND_LOCAL_VOICE_SCHEMA,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_LOCAL_TEXT):
+
+        async def _handle_send_local_text(call: ServiceCall) -> None:
+            await _explain_refusal(coordinator.async_send_text(
+                _imei_from_call(call, hass, coordinator),
+                call.data[ATTR_TEXT],
+            ))
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_SEND_LOCAL_TEXT, _handle_send_local_text,
+            schema=SEND_LOCAL_TEXT_SCHEMA,
+        )
+
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_TTS_VOICE):
 
         async def _handle_send_tts_voice(call: ServiceCall) -> None:
@@ -335,6 +361,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_LOCAL_CONTACT,
                 SERVICE_REMOVE_LOCAL_CONTACT,
                 SERVICE_SEND_LOCAL_VOICE,
+                SERVICE_SEND_LOCAL_TEXT,
                 SERVICE_SEND_TTS_VOICE,
             ):
                 if hass.services.has_service(DOMAIN, svc):

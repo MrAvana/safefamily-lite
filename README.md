@@ -17,6 +17,7 @@ local backend.
 - Newest camera photo as an image entity.
 - Phonebook management, including guardian protection.
 - Voice messages and Home Assistant TTS playback on the watch.
+- Short text notifications on the watch screen.
 - All data stays on your own hardware.
 
 ## Supported devices
@@ -229,6 +230,24 @@ data:
 `url` must be reachable from Home Assistant itself, for example a file in
 `/config/www`.
 
+## Text notifications
+
+The watch can show a short message on screen and beep:
+
+```yaml
+action: safefamily_lite.send_local_text
+data:
+  watch: 0123456789abcdef0123456789abcdef
+  text: "Time to come home"
+```
+
+This is the watch's own notification overlay, not an SMS. It is transient: it
+disappears after a moment and does not appear in the Messaging app. Text is
+capped at 64 characters. The watch must be connected when the service is
+called; the message is never queued, so an offline watch fails instead of
+showing the text hours later. In the service UI the watch is a device picker,
+and `imei` remains a script fallback.
+
 ## Services
 
 All services are under the `safefamily_lite.` domain.
@@ -240,8 +259,9 @@ All services are under the `safefamily_lite.` domain.
 | `remove_local_contact` | Remove one contact |
 | `send_local_voice` | Queue an AMR file for the watch |
 | `send_tts_voice` | Generate and queue a TTS message |
+| `send_local_text` | Show a short notification on the watch now |
 
-Use **Developer Tools → Actions** to call them. The four phonebook/voice
+Use **Developer Tools → Actions** to call them. The phonebook, voice and text
 services accept `watch` (device picker) or `imei` (script fallback).
 
 ## Example automations

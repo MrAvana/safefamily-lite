@@ -11,6 +11,7 @@ HTTP JSON API:
     POST /locate?imei=               ask the watch for a real-time fix
     POST /photo?imei=                take a photo now (refused if offline)
     GET  /photos/latest              the newest photo, as image/jpeg
+    POST /text?imei=&text=           show a short notification (refused if offline)
     GET  /voices/latest?imei=        the newest AMR the watch sent
     POST /voice/send?imei=           queue an AMR for the watch (raw body)
     POST /contacts?imei=             replace the watch's phonebook
@@ -21,9 +22,10 @@ this integration needs them yet.)
 Only what that backend can serve is exposed here: the position (device_tracker),
 battery, last-contact, link, phonebook and voice sensors, the locate / refresh /
 restart / take-photo buttons, the newest photo, plus services to write the
-phonebook and send a voice message. Chat history, geofences, class mode and
-the rest of the vendor feature set are not available yet; they need local
-implementations before they can be exposed again.
+phonebook, send a voice message and show a short text notification. Chat
+history, geofences, class mode and the rest of the vendor feature set are not
+available yet; they need local implementations before they can be exposed
+again.
 
 The phonebook deserves its own note. It is the watch's call whitelist: with
 "Protect from Stranger Calls" on, a number not in it is rejected, so an empty
@@ -98,6 +100,11 @@ GPS_RAW_PREFIX = "IWAP01"
 GPS_ACCURACY_M = 10
 
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
+
+# Mirrors the backend's TEXT_MAX_CHARS. A notification is one short line on a
+# 128px screen, not a message thread; the backend is the authority and refuses
+# longer text, but checking here gives the service caller a clearer error.
+TEXT_MAX_CHARS = 64
 
 
 class LocalApiError(Exception):
@@ -236,6 +243,18 @@ class LocalApi:
             raise
         except (aiohttp.ClientError, TimeoutError) as err:
             raise LocalApiError(f"/photos/latest failed: {err}") from err
+
+    async def send_text(self, session: aiohttp.ClientSession, imei: str,
+                        text: str) -> dict:
+        """Show a short notification on the watch, now.
+
+        The backend refuses when the watch has no live session: a text that
+        waited for the next login would arrive at the wrong moment, and the
+        watch's notification is transient rather than an inbox item.
+        """
+        return await self._request(
+            session, "POST", "/text", imei=imei, text=text
+        )
 
     async def voice_latest(self, session: aiohttp.ClientSession,
                            imei: str) -> bytes | None:
@@ -537,6 +556,24 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         """
         await self.api.take_photo(self._session, imei)
         _LOGGER.debug("Photo requested for %s", imei)
+
+    async def async_send_text(self, imei: str, text: str) -> dict:
+        """Show a short text notification on the watch.
+
+        This is the firmware's own overlay, not an SMS: it appears on screen
+        and beeps, then is gone. The backend refuses when the watch is offline,
+        so the caller learns the message did not go out instead of having it
+        delivered at some later login.
+        """
+        text = text.strip()
+        if not text:
+            raise LocalApiError("text is empty", refusal=True)
+        if len(text.encode("utf-16-be")) // 2 > TEXT_MAX_CHARS:
+            raise LocalApiError(
+                f"text is longer than {TEXT_MAX_CHARS} characters",
+                refusal=True,
+            )
+        return await self.api.send_text(self._session, imei, text)
 
     async def async_send_voice(self, imei: str, url: str,
                                notify: bool = False) -> dict:
