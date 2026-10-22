@@ -248,6 +248,22 @@ called; the message is never queued, so an offline watch fails instead of
 showing the text hours later. In the service UI the watch is a device picker,
 and `imei` remains a script fallback.
 
+## Stickers
+
+The watch has four built-in K01 stickers. They use the same transient overlay
+as a text notification and are sent as a fixed `k01emN` code, not as free text:
+
+```yaml
+action: safefamily_lite.send_local_emoji
+data:
+  watch: 0123456789abcdef0123456789abcdef
+  sticker: Teal
+```
+
+Choose `Teal`, `Orange`, `Green` or `Red`. The watch must be connected when
+the service is called; the sticker is never queued. It is not an SMS and does
+not appear in the Messaging app.
+
 ## Services
 
 All services are under the `safefamily_lite.` domain.
@@ -260,9 +276,10 @@ All services are under the `safefamily_lite.` domain.
 | `send_local_voice` | Queue an AMR file for the watch |
 | `send_tts_voice` | Generate and queue a TTS message |
 | `send_local_text` | Show a short notification on the watch now |
+| `send_local_emoji` | Show one of the four built-in K01 stickers now |
 
-Use **Developer Tools → Actions** to call them. The phonebook, voice and text
-services accept `watch` (device picker) or `imei` (script fallback).
+Use **Developer Tools → Actions** to call them. The phonebook, voice, text and
+sticker services accept `watch` (device picker) or `imei` (script fallback).
 
 ## Example automations
 

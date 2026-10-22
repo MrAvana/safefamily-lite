@@ -38,11 +38,13 @@ SERVICE_REMOVE_LOCAL_CONTACT = "remove_local_contact"
 SERVICE_SEND_LOCAL_VOICE = "send_local_voice"
 SERVICE_SEND_TTS_VOICE = "send_tts_voice"
 SERVICE_SEND_LOCAL_TEXT = "send_local_text"
+SERVICE_SEND_LOCAL_EMOJI = "send_local_emoji"
 
 ATTR_VOICE_URL = "url"
 ATTR_VOICE_NOTIFY = "notify"
 ATTR_VOICE_BURST = "burst"
 ATTR_TEXT = "text"
+ATTR_STICKER = "sticker"
 ATTR_TTS_MESSAGE = "message"
 ATTR_TTS_ENGINE = "engine"
 ATTR_TTS_LANGUAGE = "language"
@@ -118,6 +120,24 @@ SEND_LOCAL_TEXT_SCHEMA = vol.Schema(
         vol.Optional(ATTR_IMEI): cv.string,
         # A transient notification on the watch screen, not an SMS.
         vol.Required(ATTR_TEXT): cv.string,
+    }
+)
+
+# The four built-in K01 stickers, in firmware order (`k01em0`..`k01em3`).
+# The service exposes the colours because that is how the images differ.
+EMOJI_OPTIONS = {
+    "Teal": 0,
+    "Orange": 1,
+    "Green": 2,
+    "Red": 3,
+}
+
+SEND_LOCAL_EMOJI_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_WATCH): cv.string,
+        vol.Optional(ATTR_IMEI): cv.string,
+        # One of the watch's four predefined stickers, not free text.
+        vol.Required(ATTR_STICKER): vol.In(EMOJI_OPTIONS),
     }
 )
 
@@ -304,6 +324,19 @@ async def _async_setup_local(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=SEND_LOCAL_TEXT_SCHEMA,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_LOCAL_EMOJI):
+
+        async def _handle_send_local_emoji(call: ServiceCall) -> None:
+            await _explain_refusal(coordinator.async_send_emoji(
+                _imei_from_call(call, hass, coordinator),
+                EMOJI_OPTIONS[call.data[ATTR_STICKER]],
+            ))
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_SEND_LOCAL_EMOJI, _handle_send_local_emoji,
+            schema=SEND_LOCAL_EMOJI_SCHEMA,
+        )
+
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_TTS_VOICE):
 
         async def _handle_send_tts_voice(call: ServiceCall) -> None:
@@ -362,6 +395,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_REMOVE_LOCAL_CONTACT,
                 SERVICE_SEND_LOCAL_VOICE,
                 SERVICE_SEND_LOCAL_TEXT,
+                SERVICE_SEND_LOCAL_EMOJI,
                 SERVICE_SEND_TTS_VOICE,
             ):
                 if hass.services.has_service(DOMAIN, svc):

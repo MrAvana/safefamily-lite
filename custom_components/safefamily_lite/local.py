@@ -256,6 +256,18 @@ class LocalApi:
             session, "POST", "/text", imei=imei, text=text
         )
 
+    async def send_emoji(self, session: aiohttp.ClientSession, imei: str,
+                         index: int) -> dict:
+        """Show one of the four built-in K01 stickers, now.
+
+        The wire form is still a text overlay; the firmware recognizes the
+        `k01emN` marker and draws its image. The backend refuses when the
+        watch has no live session, so a sticker cannot arrive hours later.
+        """
+        return await self._request(
+            session, "POST", "/emoji", imei=imei, index=index
+        )
+
     async def voice_latest(self, session: aiohttp.ClientSession,
                            imei: str) -> bytes | None:
         """The newest AMR message the watch sent, or None if there is none."""
@@ -574,6 +586,25 @@ class LocalCoordinator(DataUpdateCoordinator[dict[str, dict]]):
                 refusal=True,
             )
         return await self.api.send_text(self._session, imei, text)
+
+    async def async_send_emoji(self, imei: str, index: int) -> dict:
+        """Show one of the watch's four built-in stickers on screen.
+
+        This is the same transient overlay as a text notification. The
+        firmware renders `k01em0`..`k01em3` as images, and the vendor app
+        sends those codes as ordinary text. The backend refuses when the
+        watch is offline, so the caller knows it did not go out.
+        """
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or not 0 <= index <= 3
+        ):
+            raise LocalApiError(
+                "sticker must be one of Teal, Orange, Green or Red",
+                refusal=True,
+            )
+        return await self.api.send_emoji(self._session, imei, index)
 
     async def async_send_voice(self, imei: str, url: str,
                                notify: bool = False) -> dict:

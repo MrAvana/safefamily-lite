@@ -1,7 +1,7 @@
 {
   "domain": "safefamily_lite",
   "name": "SafeFamily Lite",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "config_flow": true,
   "dependencies": [
     "tts"

@@ -140,6 +140,36 @@ send_local_text:
       example: "Time to come home"
       selector: { text: { multiline: true } }
 
+send_local_emoji:
+  name: Send sticker (local backend)
+  description: >
+    Show one of the watch's four built-in K01 stickers and make it beep. The
+    sticker is the same transient on-screen overlay as a text notification,
+    not an SMS or a Messaging entry. The watch must be connected now; it is
+    never queued. Choose by colour: Teal, Orange, Green or Red. The watch
+    picker lists local SafeFamily Lite devices; scripts can still pass `imei`.
+  fields:
+    watch:
+      required: false
+      selector:
+        device:
+          filter:
+            - integration: safefamily_lite
+    imei:
+      required: false
+      example: "123456789012345"
+      selector: { text: {} }
+    sticker:
+      required: true
+      default: "Teal"
+      selector:
+        select:
+          options:
+            - Teal
+            - Orange
+            - Green
+            - Red
+
 send_tts_voice:
   name: Send TTS voice message (local backend)
   description: >
