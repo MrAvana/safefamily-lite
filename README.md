@@ -18,6 +18,7 @@ local backend.
 - Phonebook management, including guardian protection.
 - Voice messages and Home Assistant TTS playback on the watch.
 - Short text notifications on the watch screen.
+- Four built-in K01 stickers (teal, orange, green, red).
 - All data stays on your own hardware.
 
 ## Supported devices
